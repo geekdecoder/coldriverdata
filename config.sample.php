@@ -12,6 +12,11 @@ return [
     'storage_dir' => '/home/coldriverdata.net/storage',
     'mail_from'   => 'no-reply@coldriverdata.net',
 
+    // Encrypts object-storage secret keys kept in the database. Generate once with:
+    //   php -r 'echo base64_encode(random_bytes(32)), PHP_EOL;'
+    // Do not change it afterwards, or stored secrets can no longer be read.
+    'app_key'     => '',
+
     // Shown on the Terms and Privacy pages. Anything left empty appears as a [PLACEHOLDER].
     'legal' => [
         'entity'           => '',   // registered business name that operates the service

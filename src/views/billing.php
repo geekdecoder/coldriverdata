@@ -5,8 +5,8 @@ $hasCard = $user['pay_method'] === 'card' && $user['stripe_subscription_id'] && 
 <?php if ($paid && !$plan): ?><p class="flash flash-ok">Payment received. Your plan switches on as soon as Stripe confirms it, usually within a minute. Reload this page.</p><?php endif; ?>
 <?php if ($plan): ?>
 <div class="current">
-<p><strong><?= h($plan['name']) ?></strong> · <?= h($plan['label']) ?> · paid by <?= $user['pay_method'] === 'crypto' ? 'USDC' : 'card' ?></p>
-<p class="muted"><?php if ($user['pay_method'] === 'crypto'): ?>Paid through <?= h(fmt_date($user['paid_through'])) ?>. Crypto plans do not renew by themselves; pay again before that date to extend.<?php elseif ($user['plan_status'] === 'past_due'): ?>Your last card payment failed. Update your card to keep the plan.<?php elseif ($user['plan_status'] === 'canceled'): ?>Cancelled. Access continues until <?= h(fmt_date($user['paid_through'])) ?>.<?php else: ?>Renews automatically.<?php endif; ?></p>
+<p><strong><?= h($plan['name']) ?></strong> · <?= h($plan['label']) ?> · <?= ['crypto' => 'paid by USDC', 'manual' => 'set up by support'][$user['pay_method']] ?? 'paid by card' ?></p>
+<p class="muted"><?php if ($user['pay_method'] === 'manual'): ?>Runs through <?= h(fmt_date($user['paid_through'])) ?>.<?php elseif ($user['pay_method'] === 'crypto'): ?>Paid through <?= h(fmt_date($user['paid_through'])) ?>. Crypto plans do not renew by themselves; pay again before that date to extend.<?php elseif ($user['plan_status'] === 'past_due'): ?>Your last card payment failed. Update your card to keep the plan.<?php elseif ($user['plan_status'] === 'canceled'): ?>Cancelled. Access continues until <?= h(fmt_date($user['paid_through'])) ?>.<?php else: ?>Renews automatically.<?php endif; ?></p>
 <?php require __DIR__ . '/_usage.php'; ?>
 <?php if ($user['stripe_customer_id'] && $user['pay_method'] === 'card'): ?><form method="post" action="/app/billing/portal"><?= csrf_field() ?><button class="btn btn-line">Change plan, card or cancel</button></form><?php endif; ?>
 </div>

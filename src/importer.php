@@ -190,7 +190,8 @@ function run_import(array $job): void
     $file = q('SELECT * FROM files WHERE id = ?', [$job['file_id']])->fetch();
     try {
         if (!$file) throw new RuntimeException('The uploaded file is gone.');
-        $path = storage_path((int)$file['user_id'], $file['storage_key']);
+        $path = file_local_path($file);
+        if (!$path || !is_file($path)) throw new RuntimeException('The file is not on this server, so it cannot be read.');
         $convs = 0; $msgs = 0;
         foreach (export_streams($path, $file['name']) as $fh) {
             foreach (json_stream_items($fh) as $item) {
