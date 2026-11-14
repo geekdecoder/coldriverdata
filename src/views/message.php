@@ -1,0 +1,1 @@
+<section class="wrap narrow"><h1><?= h($title) ?></h1><p><?= h($message) ?></p><p><a href="<?= current_user() ? '/app' : '/' ?>">Back to <?= current_user() ? 'your archive' : 'the home page' ?></a></p></section>
