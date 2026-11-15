@@ -37,6 +37,11 @@ foreach ($waiting as $f) {
     }
 }
 
+// Remove sign-ups that never confirmed their email within 7 days (they cannot have uploaded anything).
+$stale = q('DELETE FROM users WHERE email_verified_at IS NULL AND is_admin = 0 AND created_at < ?
+            AND NOT EXISTS (SELECT 1 FROM files f WHERE f.user_id = users.id)', [gmdate('Y-m-d H:i:s', time() - 7 * 86400)])->rowCount();
+if ($stale) echo gmdate('c') . " removed $stale unconfirmed account(s)\n";
+
 // Clear abandoned partial uploads older than a day.
 foreach (glob(rtrim((string)cfg('storage_dir'), '/') . '/tmp/*') ?: [] as $f) {
     if (is_file($f) && filemtime($f) < time() - 86400) @unlink($f);

@@ -9,6 +9,7 @@
 <div><strong><?= number_format($stats['convs']) ?></strong><span>conversations filed</span></div>
 </div>
 <?php if ($byPlan): ?><p class="muted">Current plans: <?php foreach ($byPlan as $i => $p): ?><?= $i ? ' · ' : '' ?><?= h(plans()[$p['plan']]['name'] ?? $p['plan']) ?> <?= (int)$p['n'] ?><?php endforeach; ?><?= $stats['suspended'] ? ' · ' . (int)$stats['suspended'] . ' suspended' : '' ?></p><?php endif; ?>
+<?php if ($stats['unverified']): ?><p class="muted"><?= (int)$stats['unverified'] ?> account<?= $stats['unverified'] > 1 ? 's have' : ' has' ?> not confirmed an email address. Unconfirmed accounts are removed automatically after 7 days.</p><?php endif; ?>
 
 <section class="block">
 <h2>Needs attention</h2>

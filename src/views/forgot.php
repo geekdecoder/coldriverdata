@@ -4,9 +4,11 @@
 <?php if ($sent): ?>
 <p>If that address has an account, a reset link is on its way. It works for one hour.</p>
 <?php else: ?>
+<?php if (!empty($error)): ?><p class="flash flash-err" role="alert"><?= h($error) ?></p><?php endif; ?>
 <form method="post" action="/forgot" class="form">
 <?= csrf_field() ?>
 <label for="email">Email address</label><input id="email" name="email" type="email" autocomplete="email" required>
+<?= captcha_field() ?>
 <button class="btn btn-accent btn-lg">Send the reset link</button>
 </form>
 <?php endif; ?>

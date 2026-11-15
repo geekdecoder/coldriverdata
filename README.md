@@ -50,6 +50,15 @@ A fresh install loads `schema.sql` first and then runs `php bin/migrate.php`.
 - **Storage:** add and manage where files are kept (below).
 - **Activity log:** every admin action, with who did it and when.
 
+## Sign-up protection
+
+- **Email confirmation:** a new account must click a link emailed to it before it can choose a plan
+  or upload. The link lasts 48 hours and can be re-sent. Accounts that never confirm are removed
+  by the worker after 7 days. An admin can mark an address as confirmed from the user's page.
+  This depends on the server delivering email: test it with `php bin/test-mail.php you@example.com`.
+- **Bot check:** set the two `turnstile` keys in `config.php` (free, from Cloudflare > Turnstile)
+  to show a check on the sign-up and password-reset forms. With the keys empty there is no check.
+
 ## Storage locations
 
 Out of the box, files go to `storage_dir` (shown in the admin as "Built-in folder"). In

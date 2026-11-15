@@ -3,7 +3,7 @@
 <h1 class="chat-title"><?= h($target['email']) ?></h1>
 <?php require __DIR__ . '/_admin_nav.php'; ?>
 <div class="current">
-<p><?= $target['suspended_at'] ? '<span class="tag">Suspended</span> ' : '' ?><?= $target['is_admin'] ? '<span class="tag">Admin</span> ' : '' ?>Joined <?= h(fmt_date($target['created_at'])) ?></p>
+<p><?= $target['suspended_at'] ? '<span class="tag">Suspended</span> ' : '' ?><?= $target['is_admin'] ? '<span class="tag">Admin</span> ' : '' ?><?= $target['email_verified_at'] ? '' : '<span class="tag">Email not confirmed</span> ' ?>Joined <?= h(fmt_date($target['created_at'])) ?></p>
 <p><strong>Plan:</strong> <?php if ($target['plan']): ?><?= h(plans()[$target['plan']]['name'] ?? $target['plan']) ?> · <?= h($target['pay_method'] ?? '') ?> · <?= h($target['plan_status'] ?? '') ?> · <?= $p ? 'through' : 'ended' ?> <?= h(fmt_date($target['paid_through'])) ?><?php else: ?>none<?php endif; ?></p>
 <p><strong>Storage:</strong> <?= fmt_bytes($bytes) ?><?= $p ? ' of ' . h($p['label']) : '' ?> · <?= number_format(count($files)) ?><?= count($files) === 200 ? '+' : '' ?> files · <?= number_format($convs) ?> conversations</p>
 <?php if ($target['stripe_customer_id']): ?><p class="muted small">Stripe customer <span class="mono"><?= h($target['stripe_customer_id']) ?></span><?= $target['stripe_subscription_id'] ? ' · subscription <span class="mono">' . h($target['stripe_subscription_id']) . '</span>' : '' ?>. Refunds and card changes are done in the Stripe dashboard.</p><?php endif; ?>
@@ -24,6 +24,7 @@
 <h2>Account actions</h2>
 <div class="row">
 <form method="post" action="/admin/users/<?= (int)$target['id'] ?>/reset"><?= csrf_field() ?><button class="btn btn-line">Send password reset email</button></form>
+<?php if (!$target['email_verified_at']): ?><form method="post" action="/admin/users/<?= (int)$target['id'] ?>/verify"><?= csrf_field() ?><button class="btn btn-line">Mark email as confirmed</button></form><?php endif; ?>
 <?php if (!$isSelf): ?>
 <form method="post" action="/admin/users/<?= (int)$target['id'] ?>/<?= $target['suspended_at'] ? 'unsuspend' : 'suspend' ?>"><?= csrf_field() ?><button class="btn btn-line"><?= $target['suspended_at'] ? 'Reactivate account' : 'Suspend account' ?></button></form>
 <?php endif; ?>

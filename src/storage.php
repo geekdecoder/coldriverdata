@@ -132,16 +132,70 @@ function delete_file_row(array $file): void
     q('DELETE FROM files WHERE id = ?', [$file['id']]);
 }
 
+/** Send a plain-text email. With 'mail_log' set in config.php, messages are written to that file instead (for testing). */
+function send_mail(string $to, string $subject, string $body): bool
+{
+    $from = (string)cfg('mail_from');
+    if ($log = cfg('mail_log')) {
+        return file_put_contents($log, "To: $to\nSubject: $subject\n\n$body\n---\n", FILE_APPEND) !== false;
+    }
+    $headers = 'From: ' . cfg('app_name') . ' <' . $from . ">\r\nReply-To: $from\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8";
+    return @mail($to, $subject, $body, $headers, '-f' . escapeshellarg($from));
+}
+
 function send_password_reset(array $user): void
 {
     $token = bin2hex(random_bytes(32));
     q('DELETE FROM password_resets WHERE user_id = ? OR expires_at < ?', [$user['id'], now()]);
     q('INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES (?, ?, ?)',
         [hash('sha256', $token), $user['id'], gmdate('Y-m-d H:i:s', time() + 3600)]);
-    @mail($user['email'], 'Reset your ' . cfg('app_name') . ' password',
+    send_mail($user['email'], 'Reset your ' . cfg('app_name') . ' password',
         "Use this link within one hour to choose a new password:\n\n" . url('/reset?token=' . $token) .
-        "\n\nIf you did not ask for this, ignore this email.",
-        'From: ' . cfg('mail_from'));
+        "\n\nIf you did not ask for this, ignore this email.");
+}
+
+/** Email a confirmation link. Returns false if one was sent in the last minute. */
+function send_verification(array $user): bool
+{
+    $last = q('SELECT MAX(created_at) FROM email_verifications WHERE user_id = ?', [$user['id']])->fetchColumn();
+    if ($last && strtotime($last . ' UTC') > time() - 60) return false;
+    $token = bin2hex(random_bytes(32));
+    q('DELETE FROM email_verifications WHERE expires_at < ?', [now()]);
+    q('INSERT INTO email_verifications (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)',
+        [hash('sha256', $token), $user['id'], now(), gmdate('Y-m-d H:i:s', time() + 2 * 86400)]);
+    send_mail($user['email'], 'Confirm your email for ' . cfg('app_name'),
+        "Welcome to " . cfg('app_name') . ".\n\nConfirm this email address to finish setting up your account:\n\n" . url('/verify?token=' . $token) .
+        "\n\nThe link works for 48 hours. If you did not create this account, ignore this email and it will be removed.");
+    return true;
+}
+
+// ---------- bot check (Cloudflare Turnstile) ----------
+
+function captcha_on(): bool { return (string)cfg('turnstile.site_key') !== '' && (string)cfg('turnstile.secret_key') !== ''; }
+
+/** The widget for a form, or nothing when Turnstile is not configured. */
+function captcha_field(): string
+{
+    if (!captcha_on()) return '';
+    return '<div class="cf-turnstile" data-sitekey="' . h((string)cfg('turnstile.site_key')) . '"></div>'
+         . '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>';
+}
+
+/** True when the visitor passed the check, or when no check is configured. */
+function captcha_ok(): bool
+{
+    if (!captcha_on()) return true;
+    $token = (string)($_POST['cf-turnstile-response'] ?? '');
+    if ($token === '') return false;
+    $ch = curl_init((string)(cfg('turnstile.verify_url') ?: 'https://challenges.cloudflare.com/turnstile/v0/siteverify'));
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 10,
+        CURLOPT_POSTFIELDS => http_build_query(['secret' => cfg('turnstile.secret_key'), 'response' => $token, 'remoteip' => client_ip()]),
+    ]);
+    $resp = curl_exec($ch);
+    curl_close($ch);
+    $data = is_string($resp) ? json_decode($resp, true) : null;
+    return is_array($data) && !empty($data['success']);
 }
 
 /** Delete an account and everything it stored. Returns a list of problems (empty when clean). */

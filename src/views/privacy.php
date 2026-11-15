@@ -31,7 +31,7 @@
 <ul>
 <li><strong>Stripe</strong> processes payments.</li>
 <li><strong><?= h(legal('hosting_provider')) ?></strong> provides the servers where your account and content are stored.</li>
-<li><strong>Cloudflare</strong> carries traffic between your browser and our servers and protects the site from attacks.</li>
+<li><strong>Cloudflare</strong> carries traffic between your browser and our servers, protects the site from attacks, and runs the automated check on our sign-up and password-reset forms that tells people from bots.</li>
 <li><strong>Google Fonts</strong> supplies the typefaces on our pages; your browser requests them from Google, which sees your IP address.</li>
 </ul>
 <p>We may also disclose information if required by a valid legal demand, to protect someone's safety or our legal rights, or as part of a merger or sale of the business, in which case this policy continues to apply to your information.</p>
