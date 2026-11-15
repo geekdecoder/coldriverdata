@@ -7,7 +7,7 @@
 </label>
 <ul class="upload-list" id="upload-list" aria-live="polite"></ul>
 </div>
-<script src="/assets/upload.js" defer></script>
+<script src="<?= h(asset('/assets/upload.js')) ?>" defer></script>
 <?php else: ?>
 <p class="flash flash-warn"><?= $user['plan'] ? 'Your plan has lapsed. Your data is still here to read and download; renew to upload more.' : 'Choose a plan to start uploading.' ?> <a href="/app/billing">Go to plans</a></p>
 <?php endif; ?>
