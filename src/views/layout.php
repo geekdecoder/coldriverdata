@@ -7,7 +7,7 @@
 <title><?= h(($title ?? null) ? $title . ' · ' . cfg('app_name') : cfg('app_name') . ' — AI chat archive and file storage') ?></title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap">
-<link rel="stylesheet" href="/assets/style.css">
+<link rel="stylesheet" href="<?= h(asset('/assets/style.css')) ?>">
 </head>
 <body>
 <header class="top">

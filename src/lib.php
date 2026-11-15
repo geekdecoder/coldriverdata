@@ -70,6 +70,13 @@ function fmt_date(?string $utc, string $format = 'M j, Y'): string
     return $utc ? gmdate($format, strtotime($utc . ' UTC')) : '';
 }
 
+/** Address of a file in public/, stamped with its modified time so browsers and Cloudflare fetch updates. */
+function asset(string $path): string
+{
+    $t = @filemtime(dirname(__DIR__) . '/public' . $path);
+    return $path . ($t ? '?v=' . $t : '');
+}
+
 function url(string $path = '/'): string { return rtrim((string)cfg('app_url'), '/') . $path; }
 
 function redirect(string $path): never
