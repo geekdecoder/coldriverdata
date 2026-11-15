@@ -6,6 +6,7 @@ require dirname(__DIR__) . '/src/stripe.php';
 require dirname(__DIR__) . '/src/importer.php';
 require dirname(__DIR__) . '/src/s3.php';
 require dirname(__DIR__) . '/src/storage.php';
+require dirname(__DIR__) . '/src/twostep.php';
 
 $path = rtrim(parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/', '/') ?: '/';
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
@@ -80,6 +81,10 @@ if ($path === '/login') {
         elseif ($row && !empty($row['suspended_at']) && password_verify((string)($_POST['password'] ?? ''), $row['password_hash'])) $error = 'This account is suspended. Contact support.';
         elseif ($row && password_verify((string)($_POST['password'] ?? ''), $row['password_hash'])) {
             session_regenerate_id(true);
+            if (two_step_on($row)) {
+                $_SESSION['pending_2fa'] = ['uid' => (int)$row['id'], 'at' => time(), 'tries' => 0];
+                redirect('/login/code');
+            }
             $_SESSION['uid'] = (int)$row['id'];
             redirect('/app');
         } else {
@@ -88,6 +93,35 @@ if ($path === '/login') {
         }
     }
     render('login', ['error' => $error, 'email' => $email]);
+}
+
+if ($path === '/login/code') {
+    $p = $_SESSION['pending_2fa'] ?? null;
+    if (!$p || $p['at'] < time() - 600) { unset($_SESSION['pending_2fa']); redirect('/login'); }
+    $error = null;
+    if ($method === 'POST') {
+        $row = q('SELECT * FROM users WHERE id = ?', [$p['uid']])->fetch();
+        $code = (string)($_POST['code'] ?? '');
+        $recent = (int)q('SELECT COUNT(*) FROM login_attempts WHERE ip = ? AND at > ?', [client_ip(), gmdate('Y-m-d H:i:s', time() - 900)])->fetchColumn();
+        if (!$row || !empty($row['suspended_at'])) { unset($_SESSION['pending_2fa']); redirect('/login'); }
+        if ($recent >= 10 || $p['tries'] >= 5) {
+            unset($_SESSION['pending_2fa']);
+            flash('Too many wrong codes. Wait 15 minutes, then sign in again.', 'err');
+            redirect('/login');
+        }
+        if (two_step_check_code($row, $code) || two_step_use_recovery($row, $code)) {
+            unset($_SESSION['pending_2fa']);
+            session_regenerate_id(true);
+            $_SESSION['uid'] = (int)$row['id'];
+            $left = (int)q('SELECT COUNT(*) FROM recovery_codes WHERE user_id = ? AND used_at IS NULL', [$row['id']])->fetchColumn();
+            if ($left <= 2) flash('You have ' . $left . ' recovery code' . ($left === 1 ? '' : 's') . ' left. Make new ones on the Security page.', 'warn');
+            redirect('/app');
+        }
+        $_SESSION['pending_2fa']['tries']++;
+        q('INSERT INTO login_attempts (ip, at) VALUES (?, ?)', [client_ip(), now()]);
+        $error = 'That code is not right. Codes change every 30 seconds, so use the newest one.';
+    }
+    render('login_code', ['error' => $error]);
 }
 
 if ($path === '/logout' && $method === 'POST') {
@@ -328,6 +362,54 @@ if ($path === '/app/billing/portal' && $method === 'POST') {
         flash($e->getMessage(), 'err');
         redirect('/app/billing');
     }
+}
+
+// ---------- security (two-step sign-in) ----------
+if ($path === '/app/security' && $method === 'GET') {
+    $codes = $_SESSION['new_recovery_codes'] ?? null;
+    unset($_SESSION['new_recovery_codes']);
+    $setup = $_SESSION['totp_setup'] ?? null;
+    render('security', [
+        'user' => $user, 'available' => app_key() !== null, 'codes' => $codes, 'setup' => $setup,
+        'left' => (int)q('SELECT COUNT(*) FROM recovery_codes WHERE user_id = ? AND used_at IS NULL', [$user['id']])->fetchColumn(),
+    ]);
+}
+
+if (preg_match('#^/app/security/(start|cancel|confirm|disable|codes)$#', $path, $m) && $method === 'POST') {
+    $back = '/app/security';
+    if ($m[1] === 'start') {
+        if (app_key() === null) { flash('Two-step sign-in is not available yet.', 'err'); redirect($back); }
+        if (!two_step_on($user)) $_SESSION['totp_setup'] = totp_new_secret();
+        redirect($back);
+    }
+    if ($m[1] === 'cancel') { unset($_SESSION['totp_setup']); redirect($back); }
+    if ($m[1] === 'confirm') {
+        $secret = $_SESSION['totp_setup'] ?? null;
+        if (!$secret || two_step_on($user)) redirect($back);
+        $step = totp_match($secret, (string)($_POST['code'] ?? ''));
+        if ($step === null) { flash('That code is not right. Check the time on your phone is set automatically, then enter the newest code.', 'err'); redirect($back); }
+        q('UPDATE users SET totp_secret_enc = ?, totp_enabled_at = ?, totp_last_step = ? WHERE id = ?', [secret_encrypt($secret), now(), $step, $user['id']]);
+        unset($_SESSION['totp_setup']);
+        $_SESSION['new_recovery_codes'] = two_step_new_recovery_codes((int)$user['id']);
+        flash('Two-step sign-in is on.');
+        redirect($back);
+    }
+    // disable and new codes both need the password and a current code
+    $okPass = password_verify((string)($_POST['password'] ?? ''), $user['password_hash']);
+    $code = (string)($_POST['code'] ?? '');
+    if (!two_step_on($user)) redirect($back);
+    if (!$okPass || !(two_step_check_code($user, $code) || two_step_use_recovery($user, $code))) {
+        flash('Password or code not right. Nothing was changed.', 'err');
+        redirect($back);
+    }
+    if ($m[1] === 'disable') {
+        two_step_disable((int)$user['id']);
+        flash('Two-step sign-in is off.');
+    } else {
+        $_SESSION['new_recovery_codes'] = two_step_new_recovery_codes((int)$user['id']);
+        flash('New recovery codes made. The old ones no longer work.');
+    }
+    redirect($back);
 }
 
 fail(404, 'There is no page at this address.');

@@ -175,6 +175,10 @@ function require_admin(): array
 {
     $u = require_user();
     if (empty($u['is_admin'])) fail(404, 'There is no page at this address.');
+    if (cfg('require_admin_2fa') !== false && empty($u['totp_enabled_at'])) {
+        flash('Admin pages need two-step sign-in. Turn it on here first.', 'warn');
+        redirect('/app/security');
+    }
     return $u;
 }
 

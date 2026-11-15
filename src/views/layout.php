@@ -22,6 +22,7 @@
 <a href="/app/chats">Chats</a>
 <a href="/app/files">Files</a>
 <a href="/app/billing">Plan</a>
+<a href="/app/security">Security</a>
 <?php if (!empty($u['is_admin'])): ?><a href="/admin">Admin</a><?php endif; ?>
 <form method="post" action="/logout"><?= csrf_field() ?><button class="linkish">Sign out</button></form>
 <?php else: ?>

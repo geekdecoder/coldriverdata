@@ -59,6 +59,18 @@ A fresh install loads `schema.sql` first and then runs `php bin/migrate.php`.
 - **Bot check:** set the two `turnstile` keys in `config.php` (free, from Cloudflare > Turnstile)
   to show a check on the sign-up and password-reset forms. With the keys empty there is no check.
 
+## Two-step sign-in
+
+Any account can turn on two-step sign-in from the **Security** page: scan a QR code with an
+authenticator app (Google Authenticator, Authy, 1Password, Microsoft Authenticator), enter a code
+to confirm, and save the ten one-time recovery codes. After that, signing in needs the password
+plus a code. Admin pages require it (`require_admin_2fa` in `config.php`).
+
+Secrets are encrypted with `app_key`, so `app_key` must be set. If someone loses both their phone
+and their recovery codes, an admin can turn it off from the user's page, or from the server:
+
+    php bin/reset-2fa.php you@example.com
+
 ## Storage locations
 
 Out of the box, files go to `storage_dir` (shown in the admin as "Built-in folder"). In

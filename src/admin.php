@@ -66,7 +66,7 @@ if ($path === '/admin/users' && $method === 'GET') {
     render('admin_users', compact('users', 'term', 'page', 'more'));
 }
 
-if (preg_match('#^/admin/users/(\d+)(?:/(plan|suspend|unsuspend|reset|delete|verify))?$#', $path, $m)) {
+if (preg_match('#^/admin/users/(\d+)(?:/(plan|suspend|unsuspend|reset|delete|verify|twostep))?$#', $path, $m)) {
     $target = q('SELECT * FROM users WHERE id = ?', [$m[1]])->fetch();
     if (!$target) fail(404, 'No such account.');
     $action = $m[2] ?? null;
@@ -114,6 +114,13 @@ if (preg_match('#^/admin/users/(\d+)(?:/(plan|suspend|unsuspend|reset|delete|ver
         q('DELETE FROM email_verifications WHERE user_id = ?', [$target['id']]);
         admin_log($admin, 'email marked verified', $target['email']);
         flash('Email marked as confirmed.');
+        redirect($back);
+    }
+    if ($action === 'twostep') {
+        if ($isSelf) { flash('Turn off your own two-step sign-in from the Security page.', 'err'); redirect($back); }
+        two_step_disable((int)$target['id']);
+        admin_log($admin, 'two-step sign-in turned off', $target['email']);
+        flash('Two-step sign-in is off for this account. They can sign in with their password and set it up again.');
         redirect($back);
     }
     if ($action === 'reset') {
