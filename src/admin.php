@@ -38,6 +38,7 @@ if ($path === '/admin' && $method === 'GET') {
         'users' => (int)q('SELECT COUNT(*) FROM users')->fetchColumn(),
         'paying' => (int)q('SELECT COUNT(*) FROM users WHERE plan IS NOT NULL AND paid_through > ?', [$nowUtc])->fetchColumn(),
         'suspended' => (int)q('SELECT COUNT(*) FROM users WHERE suspended_at IS NOT NULL')->fetchColumn(),
+        'unverified' => (int)q('SELECT COUNT(*) FROM users WHERE email_verified_at IS NULL')->fetchColumn(),
         'new7' => (int)q('SELECT COUNT(*) FROM users WHERE created_at > ?', [gmdate('Y-m-d H:i:s', time() - 7 * 86400)])->fetchColumn(),
         'bytes' => (int)q('SELECT COALESCE(SUM(size), 0) FROM files')->fetchColumn(),
         'files' => (int)q('SELECT COUNT(*) FROM files')->fetchColumn(),
@@ -57,7 +58,7 @@ if ($path === '/admin/users' && $method === 'GET') {
     $per = 50;
     $where = $term !== '' ? 'WHERE u.email LIKE ?' : '';
     $args = $term !== '' ? ['%' . addcslashes($term, '%_\\') . '%'] : [];
-    $users = q("SELECT u.id, u.email, u.plan, u.pay_method, u.plan_status, u.paid_through, u.suspended_at, u.is_admin, u.created_at,
+    $users = q("SELECT u.id, u.email, u.plan, u.pay_method, u.plan_status, u.paid_through, u.suspended_at, u.is_admin, u.created_at, u.email_verified_at,
                        (SELECT COALESCE(SUM(size), 0) FROM files f WHERE f.user_id = u.id) AS bytes
                 FROM users u $where ORDER BY u.id DESC LIMIT " . ($per + 1) . ' OFFSET ' . (($page - 1) * $per), $args)->fetchAll();
     $more = count($users) > $per;
@@ -65,7 +66,7 @@ if ($path === '/admin/users' && $method === 'GET') {
     render('admin_users', compact('users', 'term', 'page', 'more'));
 }
 
-if (preg_match('#^/admin/users/(\d+)(?:/(plan|suspend|unsuspend|reset|delete))?$#', $path, $m)) {
+if (preg_match('#^/admin/users/(\d+)(?:/(plan|suspend|unsuspend|reset|delete|verify))?$#', $path, $m)) {
     $target = q('SELECT * FROM users WHERE id = ?', [$m[1]])->fetch();
     if (!$target) fail(404, 'No such account.');
     $action = $m[2] ?? null;
@@ -106,6 +107,13 @@ if (preg_match('#^/admin/users/(\d+)(?:/(plan|suspend|unsuspend|reset|delete))?$
         q('UPDATE users SET suspended_at = ? WHERE id = ?', [$action === 'suspend' ? now() : null, $target['id']]);
         admin_log($admin, $action === 'suspend' ? 'suspended' : 'reactivated', $target['email']);
         flash($action === 'suspend' ? 'Account suspended. They are signed out and cannot sign in. Billing is not changed.' : 'Account reactivated.');
+        redirect($back);
+    }
+    if ($action === 'verify') {
+        q('UPDATE users SET email_verified_at = COALESCE(email_verified_at, ?) WHERE id = ?', [now(), $target['id']]);
+        q('DELETE FROM email_verifications WHERE user_id = ?', [$target['id']]);
+        admin_log($admin, 'email marked verified', $target['email']);
+        flash('Email marked as confirmed.');
         redirect($back);
     }
     if ($action === 'reset') {

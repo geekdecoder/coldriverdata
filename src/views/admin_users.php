@@ -9,7 +9,7 @@
 <tbody>
 <?php foreach ($users as $u2): $current = $u2['plan'] && $u2['paid_through'] && strtotime($u2['paid_through'] . ' UTC') > $nowTs; ?>
 <tr>
-<td class="name"><a href="/admin/users/<?= (int)$u2['id'] ?>"><?= h($u2['email']) ?></a><?= $u2['is_admin'] ? ' <span class="tag">Admin</span>' : '' ?><?= $u2['suspended_at'] ? ' <span class="tag">Suspended</span>' : '' ?></td>
+<td class="name"><a href="/admin/users/<?= (int)$u2['id'] ?>"><?= h($u2['email']) ?></a><?= $u2['is_admin'] ? ' <span class="tag">Admin</span>' : '' ?><?= $u2['suspended_at'] ? ' <span class="tag">Suspended</span>' : '' ?><?= $u2['email_verified_at'] ? '' : ' <span class="tag">Unconfirmed</span>' ?></td>
 <td><?= $u2['plan'] ? h(plans()[$u2['plan']]['name'] ?? $u2['plan']) . ' · ' . h($u2['pay_method'] ?? '') . ($current ? ($u2['plan_status'] === 'past_due' ? ' · payment failed' : '') : ' · ended') : '<span class="muted">None</span>' ?></td>
 <td><?= h(fmt_date($u2['paid_through'])) ?></td>
 <td><?= fmt_bytes((int)$u2['bytes']) ?></td>

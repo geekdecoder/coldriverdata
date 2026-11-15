@@ -51,15 +51,19 @@ if ($path === '/signup') {
     if ($method === 'POST') {
         $email = strtolower(trim((string)($_POST['email'] ?? '')));
         $pass = (string)($_POST['password'] ?? '');
-        if (!filter_var($email, FILTER_VALIDATE_EMAIL) || strlen($email) > 190) $error = 'Enter a valid email address.';
+        if (!captcha_ok()) $error = 'Please complete the check that shows you are not a robot.';
+        elseif (!filter_var($email, FILTER_VALIDATE_EMAIL) || strlen($email) > 190) $error = 'Enter a valid email address.';
         elseif (strlen($pass) < 10) $error = 'Use a password of at least 10 characters.';
         elseif (q('SELECT 1 FROM users WHERE email = ?', [$email])->fetch()) $error = 'An account with that email already exists. Sign in instead.';
         else {
             q('INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)', [$email, password_hash($pass, PASSWORD_DEFAULT), now()]);
+            $newId = (int)db()->lastInsertId();
             session_regenerate_id(true);
-            $_SESSION['uid'] = (int)db()->lastInsertId();
+            $_SESSION['uid'] = $newId;
             $want = (string)($_POST['plan'] ?? '');
-            redirect('/app/billing' . (isset(plans()[$want]) ? '?plan=' . $want : ''));
+            if (isset(plans()[$want])) $_SESSION['want_plan'] = $want;
+            send_verification(['id' => $newId, 'email' => $email]);
+            redirect('/verify');
         }
     }
     render('signup', ['error' => $error, 'email' => $email, 'plan' => (string)($_GET['plan'] ?? ($_POST['plan'] ?? ''))]);
@@ -95,12 +99,13 @@ if ($path === '/logout' && $method === 'POST') {
 if ($path === '/forgot') {
     $sent = false;
     if ($method === 'POST') {
+        if (!captcha_ok()) render('forgot', ['sent' => false, 'error' => 'Please complete the check that shows you are not a robot.']);
         $email = strtolower(trim((string)($_POST['email'] ?? '')));
         $row = q('SELECT id, email FROM users WHERE email = ?', [$email])->fetch();
         if ($row) send_password_reset($row);
         $sent = true;   // same answer whether or not the address exists
     }
-    render('forgot', ['sent' => $sent]);
+    render('forgot', ['sent' => $sent, 'error' => null]);
 }
 
 if ($path === '/reset') {
@@ -121,12 +126,43 @@ if ($path === '/reset') {
     render('reset', ['token' => $token, 'error' => $error]);
 }
 
+// ---------- email verification ----------
+if ($path === '/verify' && $method === 'GET') {
+    $token = (string)($_GET['token'] ?? '');
+    if ($token !== '') {
+        $row = q('SELECT * FROM email_verifications WHERE token_hash = ? AND expires_at > ?', [hash('sha256', $token), now()])->fetch();
+        if (!$row) {
+            if ($user && $user['email_verified_at']) redirect('/app');
+            flash('That confirmation link has expired or was already used. Send a new one below.', 'err');
+            redirect($user ? '/verify' : '/login');
+        }
+        q('UPDATE users SET email_verified_at = COALESCE(email_verified_at, ?) WHERE id = ?', [now(), $row['user_id']]);
+        q('DELETE FROM email_verifications WHERE user_id = ?', [$row['user_id']]);
+        flash('Email confirmed.' . ($user ? '' : ' Sign in to continue.'));
+        if (!$user) redirect('/login');
+        $want = (string)($_SESSION['want_plan'] ?? '');
+        unset($_SESSION['want_plan']);
+        redirect('/app/billing' . ($want !== '' ? '?plan=' . $want : ''));
+    }
+    $user = require_user();
+    if ($user['email_verified_at']) redirect('/app');
+    render('verify', ['user' => $user]);
+}
+
+if ($path === '/verify/resend' && $method === 'POST') {
+    $user = require_user();
+    if ($user['email_verified_at']) redirect('/app');
+    flash(send_verification($user) ? 'A new confirmation link is on its way to ' . $user['email'] . '.' : 'A link was sent less than a minute ago. Check your inbox and spam folder, then try again shortly.', 'ok');
+    redirect('/verify');
+}
+
 // ---------- admin ----------
 if (str_starts_with($path, '/admin')) require dirname(__DIR__) . '/src/admin.php';
 
 // ---------- signed-in app ----------
 if (!str_starts_with($path, '/app')) fail(404, 'There is no page at this address.');
 $user = require_user();
+if (!$user['email_verified_at']) redirect('/verify');
 $plan = active_plan($user);
 $used = used_bytes((int)$user['id']);
 

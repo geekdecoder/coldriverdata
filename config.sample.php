@@ -17,6 +17,13 @@ return [
     // Do not change it afterwards, or stored secrets can no longer be read.
     'app_key'     => '',
 
+    // Bot check on the sign-up and password-reset forms. Create a free Turnstile widget for
+    // coldriverdata.net in the Cloudflare dashboard and paste its two keys. Empty = no check.
+    'turnstile' => [
+        'site_key'   => '',
+        'secret_key' => '',
+    ],
+
     // Shown on the Terms and Privacy pages. Anything left empty appears as a [PLACEHOLDER].
     'legal' => [
         'entity'           => '',   // registered business name that operates the service
