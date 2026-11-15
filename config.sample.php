@@ -17,6 +17,9 @@ return [
     // Do not change it afterwards, or stored secrets can no longer be read.
     'app_key'     => '',
 
+    // Admin pages require two-step sign-in. Set to false only if you accept admin access by password alone.
+    'require_admin_2fa' => true,
+
     // Bot check on the sign-up and password-reset forms. Create a free Turnstile widget for
     // coldriverdata.net in the Cloudflare dashboard and paste its two keys. Empty = no check.
     'turnstile' => [

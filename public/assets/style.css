@@ -133,3 +133,9 @@ legend{font-size:15px;font-weight:500;padding:0 6px}
 .btn-danger{background:var(--danger);border-color:var(--danger);color:#fff}.btn-danger:hover{background:#7E1F15;color:#fff}
 .danger-zone{border:1px solid var(--danger);background:#fff;padding:22px}
 .row form{margin:0}
+.qr{width:220px;max-width:100%;background:#fff;border:1px solid var(--line);padding:6px;margin:12px 0}.qr svg{display:block;width:100%;height:auto}
+.setup{margin:0;padding-left:22px;display:flex;flex-direction:column;gap:18px;max-width:640px}.setup .inline-form{margin-top:10px}
+.key{display:inline-block;background:#fff;border:1px solid var(--line);padding:3px 8px;overflow-wrap:anywhere}
+.codes-box{background:#fff;border:2px solid var(--accent);padding:22px}
+.codes{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px 20px;font-size:18px}
+.block h3{margin-top:14px}
