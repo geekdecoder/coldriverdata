@@ -111,3 +111,25 @@ td.actions{display:flex;gap:16px;align-items:center;white-space:nowrap}td.action
 .legal{max-width:760px;padding-top:56px;padding-bottom:88px;display:flex;flex-direction:column;gap:14px}
 .legal h2{font-size:24px;margin-top:22px}.legal ul{margin:0;padding-left:22px;display:flex;flex-direction:column;gap:6px}
 .legal .summary{background:#fff;border:1px solid var(--line);padding:20px 24px}
+.subnav{display:flex;flex-wrap:wrap;gap:4px 24px;border-bottom:1px solid var(--line);font-size:16px}
+.subnav a{padding:10px 0;text-decoration:none;border-bottom:3px solid transparent;margin-bottom:-1px}
+.subnav a[aria-current]{font-weight:600;border-bottom-color:var(--accent)}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(170px,100%),1fr));gap:14px}
+.stats div{background:#fff;border:1px solid var(--line);padding:18px;display:flex;flex-direction:column;gap:2px}
+.stats strong{font-family:'Space Grotesk',system-ui,sans-serif;font-size:28px;line-height:1.1}.stats span{color:var(--muted);font-size:14px}
+.plain{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:12px}
+.plain li{background:#fff;border:1px solid var(--line);padding:14px 18px}
+.plain .meter,.store .meter{margin-top:8px}
+.store-list{display:flex;flex-direction:column;gap:14px}
+.store{padding:22px;gap:10px}.store .row form{margin:0}.store p{color:var(--ink);overflow-wrap:anywhere}
+.inline-form{display:flex;flex-wrap:wrap;gap:12px 16px;align-items:flex-end}
+.inline-form>div{display:flex;flex-direction:column;gap:6px;flex:1 1 220px}
+.inline-form label,.storage-form label{font-size:15px;font-weight:500}
+select,input[type=text],input[type=date],input[type=number]{font:inherit;font-size:16px;color:var(--ink);background:#fff;border:1px solid #6B8491;padding:11px 12px;min-height:46px;width:100%}
+fieldset{border:1px solid var(--line);padding:12px 16px;margin:0;display:flex;flex-direction:column;gap:6px;background:#fff}
+legend{font-size:15px;font-weight:500;padding:0 6px}
+.radio{display:flex;gap:10px;align-items:flex-start;font-weight:400!important;margin-top:4px!important;min-height:32px}.radio input{margin-top:5px;width:auto;min-height:0}
+.storage-form{max-width:640px}.storage-form [data-for]{display:flex;flex-direction:column;gap:8px}.storage-form [hidden]{display:none}
+.btn-danger{background:var(--danger);border-color:var(--danger);color:#fff}.btn-danger:hover{background:#7E1F15;color:#fff}
+.danger-zone{border:1px solid var(--danger);background:#fff;padding:22px}
+.row form{margin:0}

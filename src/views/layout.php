@@ -1,4 +1,4 @@
-<?php $u = current_user(); $f = flash(); $inApp = $u && str_starts_with(parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/', '/app'); ?>
+<?php $u = current_user(); $f = flash(); $reqPath = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/'; $inApp = $u && (str_starts_with($reqPath, '/app') || str_starts_with($reqPath, '/admin')); ?>
 <!doctype html>
 <html lang="en">
 <head>
@@ -22,6 +22,7 @@
 <a href="/app/chats">Chats</a>
 <a href="/app/files">Files</a>
 <a href="/app/billing">Plan</a>
+<?php if (!empty($u['is_admin'])): ?><a href="/admin">Admin</a><?php endif; ?>
 <form method="post" action="/logout"><?= csrf_field() ?><button class="linkish">Sign out</button></form>
 <?php else: ?>
 <a href="/#get">What you get</a>

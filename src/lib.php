@@ -151,6 +151,7 @@ function current_user(): ?array
         $user = null;
         if (!empty($_SESSION['uid'])) {
             $user = q('SELECT * FROM users WHERE id = ?', [$_SESSION['uid']])->fetch() ?: null;
+            if ($user && !empty($user['suspended_at'])) { $user = null; unset($_SESSION['uid']); }
         }
     }
     return $user;
@@ -161,6 +162,19 @@ function require_user(): array
     $u = current_user();
     if (!$u) redirect('/login');
     return $u;
+}
+
+function require_admin(): array
+{
+    $u = require_user();
+    if (empty($u['is_admin'])) fail(404, 'There is no page at this address.');
+    return $u;
+}
+
+function admin_log(array $admin, string $action, ?string $target = null, ?string $detail = null): void
+{
+    q('INSERT INTO admin_log (admin_id, admin_email, action, target, detail, at) VALUES (?,?,?,?,?,?)',
+        [$admin['id'], $admin['email'], $action, $target, $detail !== null ? mb_substr($detail, 0, 500) : null, now()]);
 }
 
 function plans(): array { return cfg('plans'); }
@@ -211,12 +225,6 @@ function storage_tmp(int $userId, string $uploadId): string
     return $dir . '/' . $userId . '_' . $uploadId;
 }
 
-function delete_file_row(array $file): void
-{
-    $path = storage_path((int)$file['user_id'], $file['storage_key']);
-    q('DELETE FROM files WHERE id = ?', [$file['id']]);   // cascades to imports + conversations + messages
-    if (is_file($path)) @unlink($path);
-}
 
 // ---------- legal pages ----------
 

@@ -4,6 +4,8 @@ declare(strict_types=1);
 require dirname(__DIR__) . '/src/lib.php';
 require dirname(__DIR__) . '/src/stripe.php';
 require dirname(__DIR__) . '/src/importer.php';
+require dirname(__DIR__) . '/src/s3.php';
+require dirname(__DIR__) . '/src/storage.php';
 
 $path = rtrim(parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/', '/') ?: '/';
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
@@ -71,6 +73,7 @@ if ($path === '/login') {
         $recent = (int)q('SELECT COUNT(*) FROM login_attempts WHERE ip = ? AND at > ?', [client_ip(), gmdate('Y-m-d H:i:s', time() - 900)])->fetchColumn();
         $row = q('SELECT * FROM users WHERE email = ?', [$email])->fetch();
         if ($recent >= 10) $error = 'Too many attempts. Wait 15 minutes and try again.';
+        elseif ($row && !empty($row['suspended_at']) && password_verify((string)($_POST['password'] ?? ''), $row['password_hash'])) $error = 'This account is suspended. Contact support.';
         elseif ($row && password_verify((string)($_POST['password'] ?? ''), $row['password_hash'])) {
             session_regenerate_id(true);
             $_SESSION['uid'] = (int)$row['id'];
@@ -93,17 +96,8 @@ if ($path === '/forgot') {
     $sent = false;
     if ($method === 'POST') {
         $email = strtolower(trim((string)($_POST['email'] ?? '')));
-        $row = q('SELECT id FROM users WHERE email = ?', [$email])->fetch();
-        if ($row) {
-            $token = bin2hex(random_bytes(32));
-            q('DELETE FROM password_resets WHERE user_id = ? OR expires_at < ?', [$row['id'], now()]);
-            q('INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES (?, ?, ?)',
-                [hash('sha256', $token), $row['id'], gmdate('Y-m-d H:i:s', time() + 3600)]);
-            @mail($email, 'Reset your ' . cfg('app_name') . ' password',
-                "Use this link within one hour to choose a new password:\n\n" . url('/reset?token=' . $token) .
-                "\n\nIf you did not ask for this, ignore this email.",
-                'From: ' . cfg('mail_from'));
-        }
+        $row = q('SELECT id, email FROM users WHERE email = ?', [$email])->fetch();
+        if ($row) send_password_reset($row);
         $sent = true;   // same answer whether or not the address exists
     }
     render('forgot', ['sent' => $sent]);
@@ -126,6 +120,9 @@ if ($path === '/reset') {
     }
     render('reset', ['token' => $token, 'error' => $error]);
 }
+
+// ---------- admin ----------
+if (str_starts_with($path, '/admin')) require dirname(__DIR__) . '/src/admin.php';
 
 // ---------- signed-in app ----------
 if (!str_starts_with($path, '/app')) fail(404, 'There is no page at this address.');
@@ -189,11 +186,16 @@ if ($path === '/app/upload/chunk' && $method === 'POST') {
         json_out(['error' => 'This is the manifest from Claude, not your chats. Open it, find conversations-000.zip, open its export_url in the browser where you are signed in to Claude, then upload the .zip that downloads.'], 422);
     }
     $key = bin2hex(random_bytes(20));
-    $dest = storage_path((int)$user['id'], $key);
-    if (!is_dir(dirname($dest))) mkdir(dirname($dest), 0750, true);
     $sha = hash_file('sha256', $part);
-    rename($part, $dest);
-    q('INSERT INTO files (user_id, name, size, sha256, storage_key, created_at) VALUES (?,?,?,?,?,?)', [$user['id'], $name, $real, $sha, $key, now()]);
+    try {
+        [$backendId, $shipTo] = store_upload($part, (int)$user['id'], $key);
+    } catch (Throwable $e) {
+        @unlink($part);
+        error_log('upload store: ' . $e->getMessage());
+        json_out(['error' => 'The file could not be stored. Try again shortly.'], 500);
+    }
+    q('INSERT INTO files (user_id, name, size, sha256, storage_key, created_at, backend_id, ship_to) VALUES (?,?,?,?,?,?,?,?)',
+        [$user['id'], $name, $real, $sha, $key, now(), $backendId, $shipTo]);
     $fileId = (int)db()->lastInsertId();
     $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
     if ($ext === 'zip' || $ext === 'json') {
@@ -209,19 +211,12 @@ if (preg_match('#^/app/files/(\d+)/(download|delete)$#', $path, $m)) {
     $file = q('SELECT * FROM files WHERE id = ? AND user_id = ?', [$m[1], $user['id']])->fetch();
     if (!$file) fail(404, 'That file is not in your account.');
     if ($m[2] === 'delete' && $method === 'POST') {
-        delete_file_row($file);
-        flash('Deleted ' . $file['name'] . '.');
+        try { delete_file_row($file); flash('Deleted ' . $file['name'] . '.'); }
+        catch (Throwable $e) { error_log('delete: ' . $e->getMessage()); flash('That file could not be deleted right now. Try again shortly.', 'err'); }
         redirect('/app/files');
     }
     if ($m[2] === 'download' && $method === 'GET') {
-        $p = storage_path((int)$user['id'], $file['storage_key']);
-        if (!is_file($p)) fail(404, 'That file is missing from storage.');
-        while (ob_get_level()) ob_end_clean();
-        header('Content-Type: application/octet-stream');
-        header('Content-Length: ' . filesize($p));
-        header('Content-Disposition: attachment; filename="' . str_replace(['"', "\r", "\n"], '', $file['name']) . '"; filename*=UTF-8\'\'' . rawurlencode($file['name']));
-        readfile($p);
-        exit;
+        send_file($file);
     }
 }
 
