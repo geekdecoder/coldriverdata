@@ -37,6 +37,7 @@
 <a href="/#get">What you get</a>
 <a href="/#how">How it works</a>
 <a href="/#plans">Plans</a>
+<a href="/security">Security</a>
 <a href="/login">Sign in</a>
 <a class="btn btn-ice" href="/signup">Create an account</a>
 <?php endif; ?>
@@ -47,7 +48,7 @@
 <main<?= $inApp ? ' class="wrap app"' : '' ?>>
 <?= $content ?>
 </main>
-<footer class="foot"><div class="wrap foot-row"><span>Cold River Data Network</span><span class="foot-links"><a href="/terms">Terms</a><a href="/privacy">Privacy</a><span class="mono">coldriverdata.net</span></span></div></footer>
+<footer class="foot"><div class="wrap foot-row"><span>Cold River Data Network</span><span class="foot-links"><a href="/security">Security</a><a href="/terms">Terms</a><a href="/privacy">Privacy</a><span class="mono">coldriverdata.net</span></span></div></footer>
 <script>
 (function () {
   var m = document.querySelector('.usermenu');
