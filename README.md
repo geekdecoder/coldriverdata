@@ -71,6 +71,19 @@ A fresh install loads `schema.sql` first and then runs `php bin/migrate.php`.
   Plan and billing, Admin and Sign out. Profile photos are re-encoded to a 256px JPEG (needs the
   PHP GD extension) and kept in `storage_dir/avatars`, outside the storage quota.
 
+## Chat reader
+
+Opening a conversation shows it formatted the way the assistant wrote it: headings, tables, lists
+and code blocks with highlighting. The toolbar switches between Formatted, Plain, Source (the
+exact stored text) and Code only; filters by speaker; changes text size; copies a message, a code
+block, the whole conversation, or a "new-chat starter"; shows conversation statistics; and prints
+or saves as PDF. Each conversation downloads as Markdown, plain text or JSON.
+
+Formatting runs in the browser with bundled copies of marked, DOMPurify and highlight.js
+(`public/assets/vendor`, licenses alongside). Message text is sanitized before display: scripts,
+images, forms and event handlers from the original chat are removed. Nothing is loaded from other
+sites.
+
 ## Data protection
 
 Admin > Protection shows, checked live, which of these are in place. The public `/security` page

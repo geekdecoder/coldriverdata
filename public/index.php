@@ -418,6 +418,42 @@ if (preg_match('#^/app/folders/(\d+)/(rename|delete)$#', $path, $m) && $method =
     redirect('/app/chats?folder=' . $f['id']);
 }
 
+if (preg_match('#^/app/chats/(\d+)/export/(md|txt|json)$#', $path, $m) && $method === 'GET') {
+    $conv = q('SELECT * FROM conversations WHERE id = ? AND user_id = ?', [$m[1], $user['id']])->fetch();
+    if (!$conv) fail(404, 'That conversation is not in your archive.');
+    $messages = q('SELECT role, body, sent_at FROM messages WHERE conversation_id = ? ORDER BY position', [$conv['id']])->fetchAll();
+    $who = ['chatgpt' => 'ChatGPT', 'claude' => 'Claude'][$conv['source']] ?? 'Assistant';
+    $when = fn(?string $t) => $t ? fmt_date($t, 'M j, Y g:i a') . ' UTC' : '';
+    $slug = trim((string)preg_replace('/[^A-Za-z0-9]+/', '-', $conv['title']), '-');
+    $slug = $slug !== '' ? substr($slug, 0, 60) : 'conversation';
+    if ($m[2] === 'json') {
+        $type = 'application/json';
+        $out = json_encode([
+            'title' => $conv['title'], 'source' => $conv['source'], 'started_at' => $conv['started_at'], 'updated_at' => $conv['updated_at'],
+            'exported_from' => cfg('app_name'), 'exported_at' => gmdate('c'),
+            'messages' => array_map(fn($x) => ['role' => $x['role'], 'sent_at' => $x['sent_at'], 'text' => $x['body']], $messages),
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+    } elseif ($m[2] === 'md') {
+        $type = 'text/markdown';
+        $out = '# ' . $conv['title'] . "\n\n- Assistant: $who\n- Dates: " . fmt_date($conv['started_at']) . ' to ' . fmt_date($conv['updated_at'])
+             . "\n- Messages: " . count($messages) . "\n- Exported from " . cfg('app_name') . ' on ' . gmdate('M j, Y') . "\n";
+        foreach ($messages as $x) {
+            $out .= "\n---\n\n### " . ($x['role'] === 'user' ? 'You' : $who) . ($x['sent_at'] ? ' · ' . $when($x['sent_at']) : '') . "\n\n" . trim($x['body']) . "\n";
+        }
+    } else {
+        $type = 'text/plain';
+        $out = $conv['title'] . "\n" . str_repeat('=', min(70, max(3, mb_strlen($conv['title'])))) . "\n$who · " . fmt_date($conv['started_at']) . ' to ' . fmt_date($conv['updated_at']) . ' · ' . count($messages) . " messages\n";
+        foreach ($messages as $x) {
+            $out .= "\n[" . ($x['role'] === 'user' ? 'You' : $who) . ']' . ($x['sent_at'] ? ' ' . $when($x['sent_at']) : '') . "\n" . trim($x['body']) . "\n";
+        }
+    }
+    header("Content-Type: $type; charset=utf-8");
+    header('Content-Disposition: attachment; filename="' . $slug . '.' . $m[2] . '"');
+    header('Content-Length: ' . strlen($out));
+    echo $out;
+    exit;
+}
+
 if (preg_match('#^/app/chats/(\d+)$#', $path, $m) && $method === 'GET') {
     $conv = q('SELECT * FROM conversations WHERE id = ? AND user_id = ?', [$m[1], $user['id']])->fetch();
     if (!$conv) fail(404, 'That conversation is not in your archive.');
