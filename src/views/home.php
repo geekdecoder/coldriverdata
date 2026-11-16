@@ -56,6 +56,19 @@
 <p class="muted">Pay monthly by card, or pay for a year up front by card<?= cfg('stripe.crypto_enabled') ? ' or in USDC' : '' ?> and get two months free.</p>
 </section>
 
+<section class="band">
+<div class="wrap section">
+<div class="eyebrow">Security</div>
+<h2>Private by default, and plain about how.</h2>
+<div class="cards">
+<div class="card"><h3>Encrypted in transit</h3><p>Every upload, download and sign-in travels over an encrypted connection.</p></div>
+<div class="card"><h3>Yours alone</h3><p>No public file addresses. Only your signed-in account can open your files and conversations.</p></div>
+<div class="card"><h3>Two-step sign-in</h3><p>Add a code from your phone so a stolen password is not enough to get in.</p></div>
+</div>
+<p><a href="/security">Read exactly how your data is protected</a></p>
+</div>
+</section>
+
 <section class="hero cta">
 <div class="wrap hero-grid">
 <div class="stack"><h2>Start your archive.</h2><p class="lede">Create an account, choose a plan, and upload your first chat export today.</p></div>

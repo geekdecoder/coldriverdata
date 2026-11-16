@@ -17,6 +17,9 @@ return [
     // Do not change it afterwards, or stored secrets can no longer be read.
     'app_key'     => '',
 
+    // Days of nightly database backups to keep (bin/backup.php).
+    'backup_days' => 30,
+
     // Admin pages require two-step sign-in. Set to false only if you accept admin access by password alone.
     'require_admin_2fa' => true,
 

@@ -135,6 +135,10 @@ function csrf_field(): string
 
 function csrf_check(): void
 {
+    // PHP discards the whole form when it is larger than post_max_size, so say that plainly.
+    if (!$_POST && (int)($_SERVER['CONTENT_LENGTH'] ?? 0) > ini_bytes('post_max_size')) {
+        fail(413, 'That upload is larger than this server accepts in one go (' . fmt_bytes(ini_bytes('post_max_size')) . '). Go back and try a smaller file.');
+    }
     $sent = $_POST['csrf'] ?? ($_SERVER['HTTP_X_CSRF'] ?? '');
     if (!is_string($sent) || empty($_SESSION['csrf']) || !hash_equals($_SESSION['csrf'], $sent)) {
         fail(400, 'Your session expired. Go back, reload the page and try again.');
@@ -307,8 +311,12 @@ function save_avatar(string $tmp, string $dest): ?string
     $info = @getimagesize($tmp);
     if (!$info || !in_array($info[2], [IMAGETYPE_JPEG, IMAGETYPE_PNG, IMAGETYPE_WEBP, IMAGETYPE_GIF], true)) return 'Choose a JPEG, PNG or WebP image.';
     if ($info[0] > 8000 || $info[1] > 8000 || $info[0] < 32 || $info[1] < 32) return 'That image is too large or too small. Use one between 32 and 8000 pixels on each side.';
+    // Decoding needs about 5 bytes per pixel, and a rotated phone photo needs that twice.
+    @ini_set('memory_limit', '512M');
+    $limit = ini_bytes('memory_limit');
+    if ($info[0] * $info[1] * 10 > $limit - memory_get_usage()) return 'That photo has too many pixels for this server to process. Use a smaller version, for example a screenshot of it.';
     $src = @imagecreatefromstring((string)file_get_contents($tmp));
-    if (!$src) return 'That image could not be read. Try a different file.';
+    if (!$src) return 'That image could not be read. Try saving it as a JPEG or PNG first.';
     if ($info[2] === IMAGETYPE_JPEG && function_exists('exif_read_data')) {     // phones store rotation separately
         $o = (int)(@exif_read_data($tmp)['Orientation'] ?? 1);
         $deg = [3 => 180, 6 => -90, 8 => 90][$o] ?? 0;
@@ -318,8 +326,8 @@ function save_avatar(string $tmp, string $dest): ?string
     $out = imagecreatetruecolor(256, 256);
     imagefill($out, 0, 0, imagecolorallocate($out, 255, 255, 255));
     imagecopyresampled($out, $src, 0, 0, (int)(($w - $side) / 2), (int)(($h2 - $side) / 2), 256, 256, $side, $side);
-    if (!is_dir(dirname($dest))) mkdir(dirname($dest), 0750, true);
-    $ok = imagejpeg($out, $dest, 86);
+    if (!is_dir(dirname($dest)) && !@mkdir(dirname($dest), 0750, true) && !is_dir(dirname($dest))) return 'The photo folder could not be created on the server.';
+    $ok = @imagejpeg($out, $dest, 86);
     imagedestroy($src); imagedestroy($out);
     return $ok ? null : 'The photo could not be saved.';
 }
