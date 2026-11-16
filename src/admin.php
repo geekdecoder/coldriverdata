@@ -174,8 +174,10 @@ if ($path === '/admin/storage/add' && $method === 'POST') {
                      'secret_key' => $f['secret_key'], 'path_style' => !empty($f['path_style'])];
             $enc = secret_encrypt($f['secret_key']);     // fails early if app_key is missing
             s3_self_test($conn);                         // write, read back, delete
-            q('INSERT INTO storage_backends (name, type, endpoint, region, bucket, access_key, secret_enc, path_style, capacity_bytes, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
-                [$f['name'], 's3', $f['endpoint'], $f['region'], $f['bucket'], $f['access_key'], $enc, !empty($f['path_style']) ? 1 : 0, $cap, now()]);
+            $encrypt = !empty($f['encrypt']);
+            if ($encrypt) s3_encryption_self_test($conn);   // proves the store encrypts with our key
+            q('INSERT INTO storage_backends (name, type, endpoint, region, bucket, access_key, secret_enc, path_style, capacity_bytes, encrypt, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                [$f['name'], 's3', $f['endpoint'], $f['region'], $f['bucket'], $f['access_key'], $enc, !empty($f['path_style']) ? 1 : 0, $cap, $encrypt ? 1 : 0, now()]);
         } else {
             throw new RuntimeException('Choose a storage type.');
         }
@@ -188,7 +190,7 @@ if ($path === '/admin/storage/add' && $method === 'POST') {
     redirect('/admin/storage');
 }
 
-if (preg_match('#^/admin/storage/(\d+)/(default|status|test|remove)$#', $path, $m) && $method === 'POST') {
+if (preg_match('#^/admin/storage/(\d+)/(default|status|test|remove|encrypt|backup)$#', $path, $m) && $method === 'POST') {
     $id = (int)$m[1];
     $b = $id ? backend($id) : null;
     if ($id && !$b) fail(404, 'No such storage location.');
@@ -209,6 +211,18 @@ if (preg_match('#^/admin/storage/(\d+)/(default|status|test|remove)$#', $path, $
             if ($b['type'] === 's3') s3_self_test(backend_s3($b));
             elseif (!is_dir((string)$b['path']) || !is_writable((string)$b['path'])) throw new RuntimeException('The folder is missing or not writable.');
             flash("\"$label\" is reachable and writable.");
+        } elseif ($m[2] === 'encrypt' && $b && $b['type'] === 's3') {
+            if (!empty($b['encrypt'])) throw new RuntimeException('Encryption is already on for this location.');
+            s3_encryption_self_test(backend_s3($b));
+            q('UPDATE storage_backends SET encrypt = 1 WHERE id = ?', [$id]);
+            admin_log($admin, 'storage encryption on', $label);
+            flash("Encryption is on for \"$label\": the test confirmed files cannot be read without our key. New files are encrypted from now on. Run bin/protect-files.php on the server to encrypt the files already stored.");
+        } elseif ($m[2] === 'backup' && $b && $b['type'] === 's3') {
+            $on = empty($b['is_backup']);
+            q('UPDATE storage_backends SET is_backup = 0');
+            if ($on) q('UPDATE storage_backends SET is_backup = 1 WHERE id = ?', [$id]);
+            admin_log($admin, $on ? 'backup location set' : 'backup location cleared', $label);
+            flash($on ? "Database backups will be stored in \"$label\"." : 'No location is set for backups now.');
         } elseif ($m[2] === 'remove' && $b) {
             $n = (int)q('SELECT COUNT(*) FROM files WHERE backend_id = ? OR ship_to = ?', [$id, $id])->fetchColumn();
             if ($n) throw new RuntimeException("$n files still live there. A location can only be removed when it is empty.");
@@ -222,6 +236,11 @@ if (preg_match('#^/admin/storage/(\d+)/(default|status|test|remove)$#', $path, $
         flash($e->getMessage(), 'err');
     }
     redirect('/admin/storage');
+}
+
+// ---------- protection status ----------
+if ($path === '/admin/protection' && $method === 'GET') {
+    render('admin_protection', ['st' => protection_status(), 'recent' => q('SELECT b.created_at, b.size, b.object_key, s.name FROM backups b LEFT JOIN storage_backends s ON s.id = b.backend_id ORDER BY b.id DESC LIMIT 10')->fetchAll()]);
 }
 
 // ---------- activity log ----------

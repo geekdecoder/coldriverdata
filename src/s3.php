@@ -60,7 +60,7 @@ function s3_authorization(array $b, string $method, string $path, array $query, 
  * Send one request. $upload = ['fh' => resource, 'length' => int] streams that many bytes
  * from the handle's current position as the body. Returns [status, headers, body].
  */
-function s3_request(array $b, string $method, string $key, array $query = [], string $body = '', ?array $upload = null, array $extraHeaders = []): array
+function s3_request(array $b, string $method, string $key, array $query = [], string $body = '', ?array $upload = null, array $extraHeaders = [], ?callable $sink = null): array
 {
     [$scheme, $host, $base] = s3_target($b);
     $path = $base . s3_key_path($key);
@@ -68,25 +68,41 @@ function s3_request(array $b, string $method, string $key, array $query = [], st
     $payloadHash = $upload ? 'UNSIGNED-PAYLOAD' : hash('sha256', $body);
     $headers = ['host' => $host, 'x-amz-content-sha256' => $payloadHash, 'x-amz-date' => $amzDate];
     foreach ($extraHeaders as $k => $v) $headers[strtolower($k)] = $v;
+    // Encryption with a key we supply (SSE-C): the store encrypts the object and keeps no copy of the key.
+    $needsKey = in_array($method, ['PUT', 'GET', 'HEAD'], true) || ($method === 'POST' && array_key_exists('uploads', $query));
+    if (!empty($b['sse_key']) && $key !== '' && $needsKey) {
+        $headers['x-amz-server-side-encryption-customer-algorithm'] = 'AES256';
+        $headers['x-amz-server-side-encryption-customer-key'] = base64_encode($b['sse_key']);
+        $headers['x-amz-server-side-encryption-customer-key-md5'] = base64_encode(md5($b['sse_key'], true));
+    }
     $auth = s3_authorization($b, $method, $path, $query, $headers, $payloadHash, $amzDate);
 
     $send = ['Authorization: ' . $auth, 'Expect:'];
     foreach ($headers as $k => $v) if ($k !== 'host') $send[] = $k . ': ' . $v;
     $qs = s3_canonical_query($query);
-    $respHeaders = [];
+    $respHeaders = []; $liveStatus = 0;
     $ch = curl_init($scheme . '://' . $host . $path . ($qs !== '' ? '?' . $qs : ''));
     curl_setopt_array($ch, [
         CURLOPT_CUSTOMREQUEST => $method,
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_CONNECTTIMEOUT => 20,
         CURLOPT_TIMEOUT => $upload ? 3600 : 120,
-        CURLOPT_HEADERFUNCTION => function ($c, $line) use (&$respHeaders) {
+        CURLOPT_HEADERFUNCTION => function ($c, $line) use (&$respHeaders, &$liveStatus) {
+            if (preg_match('#^HTTP/\S+ (\d{3})#', $line, $hm)) $liveStatus = (int)$hm[1];
             $p = strpos($line, ':');
             if ($p !== false) $respHeaders[strtolower(trim(substr($line, 0, $p)))] = trim(substr($line, $p + 1));
             return strlen($line);
         },
     ]);
     if ($method === 'HEAD') curl_setopt($ch, CURLOPT_NOBODY, true);
+    $errBody = '';
+    if ($sink) {   // pass a successful body straight through; keep an error body to report
+        curl_setopt($ch, CURLOPT_TIMEOUT, 3600);
+        curl_setopt($ch, CURLOPT_WRITEFUNCTION, function ($c, $data) use ($sink, &$liveStatus, &$errBody) {
+            if ($liveStatus >= 200 && $liveStatus < 300) $sink($data); else $errBody .= $data;
+            return strlen($data);
+        });
+    }
     if ($upload) {
         $left = (int)$upload['length'];
         $fh = $upload['fh'];
@@ -110,7 +126,7 @@ function s3_request(array $b, string $method, string $key, array $query = [], st
     $err = curl_error($ch);
     curl_close($ch);
     if ($resp === false) throw new S3Error('Could not reach the storage server: ' . $err);
-    return [$status, $respHeaders, (string)$resp];
+    return [$status, $respHeaders, $sink ? $errBody : (string)$resp];
 }
 
 function s3_fail(string $what, int $status, string $body): never
@@ -217,4 +233,57 @@ function s3_self_test(array $b): void
     $size = s3_head($b, $key);
     s3_delete($b, $key);
     if ($size !== 23) throw new S3Error('The test object did not read back correctly.');
+}
+
+/** Stream an object's contents to $sink(string $chunk). */
+function s3_get(array $b, string $key, callable $sink): void
+{
+    [$status, , $body] = s3_request($b, 'GET', $key, [], '', null, [], $sink);
+    if ($status >= 300) s3_fail('Reading the object', $status, $body);
+}
+
+/** List objects under a prefix: [['key' => ..., 'size' => int, 'modified' => unix time], ...]. */
+function s3_list(array $b, string $prefix): array
+{
+    $out = []; $token = null;
+    do {
+        $query = ['list-type' => '2', 'prefix' => $prefix] + ($token ? ['continuation-token' => $token] : []);
+        [$status, , $body] = s3_request($b, 'GET', '', $query);
+        if ($status >= 300) s3_fail('Listing objects', $status, $body);
+        preg_match_all('#<Contents>(.*?)</Contents>#s', $body, $m);
+        foreach ($m[1] as $c) {
+            if (!preg_match('#<Key>(.*?)</Key>#s', $c, $k)) continue;
+            $out[] = [
+                'key' => html_entity_decode($k[1], ENT_QUOTES | ENT_XML1),
+                'size' => preg_match('#<Size>(\d+)</Size>#', $c, $z) ? (int)$z[1] : 0,
+                'modified' => preg_match('#<LastModified>(.*?)</LastModified>#', $c, $t) ? (int)strtotime($t[1]) : 0,
+            ];
+        }
+        $token = (str_contains($body, '<IsTruncated>true</IsTruncated>') && preg_match('#<NextContinuationToken>(.*?)</NextContinuationToken>#s', $body, $n)) ? html_entity_decode($n[1]) : null;
+    } while ($token);
+    return $out;
+}
+
+/**
+ * Prove that encryption with our key works on this store: write with a key, confirm the size,
+ * confirm the object cannot be read without the key, read it back with the key, delete it.
+ */
+function s3_encryption_self_test(array $b): void
+{
+    $key = '_crd_enctest_' . bin2hex(random_bytes(6));
+    $text = 'cold river encrypted storage test ' . bin2hex(random_bytes(8));
+    $enc = $b + ['sse_key' => random_bytes(32)];
+    $plain = $b; unset($plain['sse_key']);
+    [$status, , $body] = s3_request($enc, 'PUT', $key, [], $text);
+    if ($status >= 300) s3_fail('Writing an encrypted test object', $status, $body);
+    try {
+        if (s3_head($enc, $key) !== strlen($text)) throw new S3Error('The encrypted test object did not read back correctly.');
+        [$status] = s3_request($plain, 'GET', $key);
+        if ($status < 400) throw new S3Error('This storage returned the test object without its key, so it is not encrypting with the key we supply.');
+        $got = '';
+        s3_get($enc, $key, function ($d) use (&$got) { $got .= $d; });
+        if ($got !== $text) throw new S3Error('The encrypted test object came back changed.');
+    } finally {
+        try { s3_delete($b, $key); } catch (Throwable $ignored) {}
+    }
 }

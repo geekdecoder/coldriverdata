@@ -36,6 +36,25 @@ function backend(?int $id): ?array
     return $cache[$id];
 }
 
+/** A 32-byte key for one purpose, derived from app_key so nothing but app_key needs safeguarding. */
+function derived_key(string $purpose): string
+{
+    $k = app_key();
+    if (!$k) throw new RuntimeException("Set 'app_key' in config.php first.");
+    return hash_hkdf('sha256', $k, 32, 'crd:' . $purpose);
+}
+
+/** The encryption key for one stored file. */
+function file_key(array $file): string { return derived_key('file:' . $file['storage_key']); }
+
+/** Connection details for one file's object: adds its encryption key when the file is stored encrypted. */
+function file_conn(array $b, array $file, ?bool $encrypted = null): array
+{
+    $c = backend_s3($b);
+    if ($encrypted ?? !empty($file['encrypted'])) $c['sse_key'] = file_key($file);
+    return $c;
+}
+
 /** Connection details for the S3 client. */
 function backend_s3(array $b): array
 {
@@ -96,8 +115,9 @@ function ship_file(array $file): void
     if (!$b || $b['type'] !== 's3') throw new RuntimeException('Target storage no longer exists.');
     $local = storage_path((int)$file['user_id'], $file['storage_key']);
     if (!is_file($local)) throw new RuntimeException('Local copy is missing.');
-    s3_put_file(backend_s3($b), object_key($file), $local);          // verifies the stored size
-    q('UPDATE files SET backend_id = ?, ship_to = NULL, ship_error = NULL WHERE id = ?', [$b['id'], $file['id']]);
+    $enc = !empty($b['encrypt']);
+    s3_put_file(file_conn($b, $file, $enc), object_key($file), $local);          // verifies the stored size
+    q('UPDATE files SET backend_id = ?, ship_to = NULL, ship_error = NULL, encrypted = ? WHERE id = ?', [$b['id'], $enc ? 1 : 0, $file['id']]);
     unlink($local);
 }
 
@@ -106,7 +126,19 @@ function send_file(array $file): never
 {
     $b = backend(isset($file['backend_id']) ? (int)$file['backend_id'] : null);
     if ($b && $b['type'] === 's3') {
-        header('Location: ' . s3_presign_get(backend_s3($b), object_key($file), 300, $file['name']), true, 302);
+        if (empty($file['encrypted'])) {
+            header('Location: ' . s3_presign_get(backend_s3($b), object_key($file), 300, $file['name']), true, 302);
+            exit;
+        }
+        // Encrypted objects need their key on every request, so they are streamed through this server.
+        $conn = file_conn($b, $file);
+        if (s3_head($conn, object_key($file)) === null) fail(404, 'That file is missing from storage.');
+        while (ob_get_level()) ob_end_clean();
+        set_time_limit(0);
+        header('Content-Type: application/octet-stream');
+        header('Content-Length: ' . (int)$file['size']);
+        header('Content-Disposition: attachment; filename="' . str_replace(['"', "\r", "\n"], '', $file['name']) . '"; filename*=UTF-8\'\'' . rawurlencode($file['name']));
+        s3_get($conn, object_key($file), function ($chunk) { echo $chunk; flush(); });
         exit;
     }
     $p = file_local_path($file);
@@ -215,4 +247,106 @@ function delete_account(array $user): array
         q('DELETE FROM users WHERE id = ?', [$user['id']]);
     }
     return $problems;
+}
+
+/** Re-store one unencrypted object on an encrypting backend, encrypted. The plain copy is replaced only after the new one verifies. */
+function encrypt_stored_file(array $file): void
+{
+    $b = backend((int)$file['backend_id']);
+    if (!$b || $b['type'] !== 's3' || empty($b['encrypt'])) throw new RuntimeException('Its storage location does not have encryption turned on.');
+    $tmp = storage_tmp((int)$file['user_id'], 'enc_' . $file['id']);
+    $fh = fopen($tmp, 'wb');
+    try {
+        s3_get(backend_s3($b), object_key($file), function ($d) use ($fh) { fwrite($fh, $d); });
+        fclose($fh);
+        if (filesize($tmp) !== (int)$file['size'] || hash_file('sha256', $tmp) !== $file['sha256']) throw new RuntimeException('The stored copy does not match the original, so it was left untouched.');
+        s3_put_file(file_conn($b, $file, true), object_key($file), $tmp);
+        q('UPDATE files SET encrypted = 1 WHERE id = ?', [$file['id']]);
+    } finally {
+        if (is_resource($fh)) fclose($fh);
+        @unlink($tmp);
+    }
+}
+
+// ---------- backups ----------
+
+function backup_backend(): ?array
+{
+    return q("SELECT * FROM storage_backends WHERE is_backup = 1 AND type = 's3' LIMIT 1")->fetch() ?: null;
+}
+
+/** Encrypt (or decrypt) a file in 1 MB pieces with an authenticated stream cipher. */
+function crypt_file(string $in, string $out, string $key, bool $encrypt): void
+{
+    $i = fopen($in, 'rb'); $o = fopen($out, 'wb');
+    if (!$i || !$o) throw new RuntimeException('Cannot open the backup file.');
+    $chunk = 1 << 20;
+    if ($encrypt) {
+        [$state, $header] = sodium_crypto_secretstream_xchacha20poly1305_init_push($key);
+        fwrite($o, $header);
+        while (true) {
+            $data = (string)fread($i, $chunk);
+            $last = feof($i);
+            fwrite($o, sodium_crypto_secretstream_xchacha20poly1305_push($state, $data, '', $last ? SODIUM_CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_FINAL : SODIUM_CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_MESSAGE));
+            if ($last) break;
+        }
+    } else {
+        $header = fread($i, SODIUM_CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_HEADERBYTES);
+        $state = sodium_crypto_secretstream_xchacha20poly1305_init_pull($header, $key);
+        $done = false;
+        while (!$done && !feof($i)) {
+            $data = fread($i, $chunk + SODIUM_CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_ABYTES);
+            if ($data === '' || $data === false) break;
+            $res = sodium_crypto_secretstream_xchacha20poly1305_pull($state, $data);
+            if ($res === false) throw new RuntimeException('The backup could not be decrypted: wrong app_key, or the file is damaged.');
+            fwrite($o, $res[0]);
+            $done = $res[1] === SODIUM_CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_FINAL;
+        }
+        if (!$done) throw new RuntimeException('The backup file is incomplete.');
+    }
+    fclose($i); fclose($o);
+}
+
+/** Database connection settings as mysqldump needs them. */
+function db_cli_settings(): array
+{
+    $d = cfg('db');
+    $parts = [];
+    foreach (explode(';', (string)preg_replace('/^mysql:/', '', $d['dsn'])) as $kv) {
+        [$k, $v] = array_pad(explode('=', $kv, 2), 2, '');
+        $parts[trim($k)] = trim($v);
+    }
+    return ['host' => $parts['host'] ?? 'localhost', 'port' => $parts['port'] ?? '', 'socket' => $parts['unix_socket'] ?? '',
+            'dbname' => $parts['dbname'] ?? '', 'user' => $d['user'], 'pass' => $d['pass']];
+}
+
+/** What the protection status page and the public security page report. Every item is checked, not assumed. */
+function protection_status(): array
+{
+    $s = ['https' => str_starts_with((string)cfg('app_url'), 'https://'), 'app_key' => app_key() !== null];
+    $def = default_backend();
+    $s['default_encrypts'] = $def && $def['type'] === 's3' && !empty($def['encrypt']);
+    $s['object_storage'] = $def && $def['type'] === 's3';
+    $row = q('SELECT COUNT(*) AS total, COALESCE(SUM(encrypted), 0) AS enc, COALESCE(SUM(ship_to IS NOT NULL), 0) AS moving FROM files')->fetch();
+    $s['files_total'] = (int)$row['total']; $s['files_encrypted'] = (int)$row['enc']; $s['files_moving'] = (int)$row['moving'];
+    $s['files_all_encrypted'] = $s['default_encrypts'] && $s['files_total'] === $s['files_encrypted'];
+    // Database tables: MariaDB reports each encrypted table here.
+    $s['db_tables'] = 0; $s['db_encrypted'] = 0; $s['db_known'] = false;
+    try {
+        $name = db_cli_settings()['dbname'];
+        // MariaDB records ENCRYPTED=YES in each table's options; it refuses that option unless the key plugin is active.
+        $rows = q('SELECT TABLE_NAME, CREATE_OPTIONS FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND ENGINE = ?', [$name, 'InnoDB'])->fetchAll();
+        $s['db_tables'] = count($rows);
+        foreach ($rows as $r) if (preg_match('/ENCRYPTED`?\s*=\s*\'?YES/i', (string)$r['CREATE_OPTIONS'])) $s['db_encrypted']++;
+        $s['db_known'] = true;
+    } catch (Throwable $e) { /* not MariaDB, or no permission: reported as unknown */ }
+    $s['db_all_encrypted'] = $s['db_known'] && $s['db_tables'] > 0 && $s['db_tables'] === $s['db_encrypted'];
+    $bb = backup_backend();
+    $s['backup_location'] = $bb['name'] ?? null;
+    $last = q('SELECT created_at, size FROM backups ORDER BY id DESC LIMIT 1')->fetch();
+    $s['backup_last'] = $last['created_at'] ?? null;
+    $s['backup_count'] = (int)q('SELECT COUNT(*) FROM backups')->fetchColumn();
+    $s['backup_fresh'] = $last && strtotime($last['created_at'] . ' UTC') > time() - 36 * 3600;
+    $s['backup_days'] = (int)(cfg('backup_days') ?? 30);
+    return $s;
 }

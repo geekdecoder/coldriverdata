@@ -1,2 +1,2 @@
 <?php $cur = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?: ''; $tab = fn(string $href, string $label, bool $exact = false) => '<a href="' . $href . '"' . (($exact ? $cur === $href : str_starts_with($cur, $href)) ? ' aria-current="page"' : '') . '>' . $label . '</a>'; ?>
-<nav class="subnav" aria-label="Admin"><?= $tab('/admin', 'Overview', true) ?><?= $tab('/admin/users', 'Users') ?><?= $tab('/admin/storage', 'Storage') ?><?= $tab('/admin/log', 'Activity log') ?></nav>
+<nav class="subnav" aria-label="Admin"><?= $tab('/admin', 'Overview', true) ?><?= $tab('/admin/users', 'Users') ?><?= $tab('/admin/storage', 'Storage') ?><?= $tab('/admin/protection', 'Protection') ?><?= $tab('/admin/log', 'Activity log') ?></nav>

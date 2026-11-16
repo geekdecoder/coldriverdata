@@ -5,7 +5,7 @@
 <div class="store-list">
 <?php foreach ($storage as $s): ?>
 <div class="card store">
-<div class="block-head"><h3><?= h($s['name']) ?></h3><span><?= $s['is_default'] ? '<span class="tag tag-claude">New uploads</span>' : '' ?><?= $s['status'] !== 'active' ? '<span class="tag">Read-only</span>' : '' ?></span></div>
+<div class="block-head"><h3><?= h($s['name']) ?></h3><span><?= $s['is_default'] ? '<span class="tag tag-claude">New uploads</span>' : '' ?><?= $s['status'] !== 'active' ? '<span class="tag">Read-only</span>' : '' ?><?= !empty($s['encrypt']) ? '<span class="tag">Encrypted</span>' : '' ?><?= !empty($s['is_backup']) ? '<span class="tag">Backups</span>' : '' ?></span></div>
 <p class="small mono"><?= $s['type'] === 's3' ? 'Object storage · ' . h($s['bucket']) . ' at ' . h($s['endpoint']) . ' (' . h($s['region']) . ')' : 'Folder · ' . h($s['path']) ?></p>
 <div><?php require __DIR__ . '/_storage_usage.php'; ?></div>
 <div class="row">
@@ -13,6 +13,8 @@
 <?php if ($s['id']): ?>
 <form method="post" action="/admin/storage/<?= (int)$s['id'] ?>/test"><?= csrf_field() ?><button class="btn btn-line">Test connection</button></form>
 <form method="post" action="/admin/storage/<?= (int)$s['id'] ?>/status"><?= csrf_field() ?><button class="btn btn-line"><?= $s['status'] === 'active' ? 'Make read-only' : 'Make active' ?></button></form>
+<?php if ($s['type'] === 's3' && empty($s['encrypt'])): ?><form method="post" action="/admin/storage/<?= (int)$s['id'] ?>/encrypt"><?= csrf_field() ?><button class="btn btn-accent">Turn on encryption</button></form><?php endif; ?>
+<?php if ($s['type'] === 's3'): ?><form method="post" action="/admin/storage/<?= (int)$s['id'] ?>/backup"><?= csrf_field() ?><button class="btn btn-line"><?= empty($s['is_backup']) ? 'Use for backups' : 'Stop using for backups' ?></button></form><?php endif; ?>
 <?php if (!$s['files']): ?><form method="post" action="/admin/storage/<?= (int)$s['id'] ?>/remove"><?= csrf_field() ?><button class="linkish danger">Remove from list</button></form><?php endif; ?>
 <?php endif; ?>
 </div>
@@ -36,6 +38,7 @@
 <label for="s-bucket">Bucket name</label><input id="s-bucket" name="bucket" type="text" value="<?= $v('bucket') ?>" placeholder="coldriverdata-files">
 <label for="s-access">Access key</label><input id="s-access" name="access_key" type="text" value="<?= $v('access_key') ?>" autocomplete="off">
 <label for="s-secret">Secret key</label><input id="s-secret" name="secret_key" type="password" autocomplete="new-password">
+<label class="radio"><input type="checkbox" name="encrypt" value="1"<?= (!$form || !empty($form['encrypt'])) ? ' checked' : '' ?>> Encrypt files at rest (recommended; leave on unless the service does not support SSE-C)</label>
 <label class="radio"><input type="checkbox" name="path_style" value="1"<?= !empty($form['path_style']) ? ' checked' : '' ?>> Use path-style addresses (leave off for Hetzner; some other services need it)</label>
 </div>
 <div data-for="local">

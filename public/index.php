@@ -44,8 +44,8 @@ $user = current_user();
 if ($path === '/' && $method === 'GET') render('home');
 
 if ($path === '/security' && $method === 'GET') {
-    $b = default_backend();
-    render('data_security', ['objectStorage' => $b && $b['type'] === 's3']);
+    $st = protection_status();
+    render('data_security', ['objectStorage' => $st['object_storage'], 'st' => $st]);
 }
 if ($path === '/terms' && $method === 'GET') render('terms');
 if ($path === '/privacy' && $method === 'GET') render('privacy');

@@ -71,6 +71,49 @@ A fresh install loads `schema.sql` first and then runs `php bin/migrate.php`.
   Plan and billing, Admin and Sign out. Profile photos are re-encoded to a 256px JPEG (needs the
   PHP GD extension) and kept in `storage_dir/avatars`, outside the storage quota.
 
+## Data protection
+
+Admin > Protection shows, checked live, which of these are in place. The public `/security` page
+only states a protection once it shows as in place there.
+
+**Keep a copy of `app_key` (from `config.php`) somewhere that is not this server.** File keys and
+backup keys are derived from it. Without it, encrypted files and backups cannot be recovered.
+
+### Files encrypted at rest
+
+Object storage locations can encrypt every file with its own key (SSE-C): the storage provider
+encrypts the object and never keeps the key. New locations have it on by default. For an existing
+location, click **Turn on encryption** in Admin > Storage (it first proves that a test object
+cannot be read without its key), then bring existing files under it:
+
+    php bin/protect-files.php --dry-run     # see what would change
+    php bin/protect-files.php               # queue built-in files to move, re-store plain objects encrypted
+
+Encrypted files are downloaded through this server, since each request needs the file's key.
+
+### Database encrypted at rest
+
+Chat text is in the database. See `docs/DATABASE-ENCRYPTION.md` for the one-time MariaDB setup,
+then run `php bin/encrypt-db-tables.php` (and again after any update that adds tables).
+
+### Nightly encrypted backups
+
+1. Create a second private bucket, ideally in a different location, add it in Admin > Storage and
+   click **Use for backups**.
+2. Run one by hand: `php bin/backup.php`
+3. Add a daily cron job as the site user:
+
+       15 8 * * * php /home/coldriverdata.net/app/bin/backup.php >> /home/coldriverdata.net/storage/backup.log 2>&1
+
+Each backup is a compressed database dump, encrypted on this server before upload, kept for
+`backup_days` (default 30). To check one restores:
+
+    php bin/restore-backup.php            # list
+    php bin/restore-backup.php latest     # writes a .sql file; does not touch the live database
+
+Backups cover the database (accounts, chat archive, file records). The files themselves rely on
+the object storage's own redundancy; copying them to a second location is not built yet.
+
 ## Two-step sign-in
 
 Any account can turn on two-step sign-in from the **Security** page: scan a QR code with an
