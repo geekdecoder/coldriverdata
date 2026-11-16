@@ -144,10 +144,12 @@ function save_conversation(int $userId, int $fileId, array $conv): void
     $pdo->beginTransaction();
     try {
         // A newer export replaces the older copy of the same conversation.
+        // Keep the folder and star the person gave the older copy.
+        $old = q('SELECT folder_id, starred FROM conversations WHERE user_id = ? AND source = ? AND ext_id = ?', [$userId, $conv['source'], $conv['ext_id']])->fetch();
         q('DELETE FROM conversations WHERE user_id = ? AND source = ? AND ext_id = ?', [$userId, $conv['source'], $conv['ext_id']]);
-        q('INSERT INTO conversations (user_id, file_id, source, ext_id, title, started_at, updated_at, message_count) VALUES (?,?,?,?,?,?,?,?)',
+        q('INSERT INTO conversations (user_id, file_id, source, ext_id, title, started_at, updated_at, message_count, folder_id, starred) VALUES (?,?,?,?,?,?,?,?,?,?)',
             [$userId, $fileId, $conv['source'], mb_substr($conv['ext_id'], 0, 100), mb_substr($conv['title'], 0, 500),
-             $conv['started_at'], $conv['updated_at'], count($conv['messages'])]);
+             $conv['started_at'], $conv['updated_at'], count($conv['messages']), $old['folder_id'] ?? null, (int)($old['starred'] ?? 0)]);
         $cid = (int)$pdo->lastInsertId();
         $st = $pdo->prepare('INSERT INTO messages (conversation_id, user_id, position, role, body, sent_at) VALUES (?,?,?,?,?,?)');
         foreach ($conv['messages'] as $pos => $m) {

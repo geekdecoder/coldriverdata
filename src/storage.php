@@ -210,6 +210,9 @@ function delete_account(array $user): array
         try { delete_file_row($f); }
         catch (Throwable $e) { $problems[] = 'Could not delete ' . $f['name'] . ': ' . $e->getMessage(); }
     }
-    if (!$problems) q('DELETE FROM users WHERE id = ?', [$user['id']]);
+    if (!$problems) {
+        @unlink(avatar_path((int)$user['id']));
+        q('DELETE FROM users WHERE id = ?', [$user['id']]);
+    }
     return $problems;
 }
