@@ -59,6 +59,18 @@ A fresh install loads `schema.sql` first and then runs `php bin/migrate.php`.
 - **Bot check:** set the two `turnstile` keys in `config.php` (free, from Cloudflare > Turnstile)
   to show a check on the sign-up and password-reset forms. With the keys empty there is no check.
 
+## Chat archive organisation, themes and profile
+
+- **Folders and stars:** people file conversations into folders they create, star the ones they
+  want to find again, and filter by assistant, month, folder or star. Bulk actions move or star
+  many at once. A fresh export keeps each conversation's folder and star.
+- **Themes:** Cold River, Night River, Glacier, Sandbar, or "Match my device". Chosen per account
+  on the Profile page. Colours live as variables at the top of `public/assets/style.css`; add a
+  theme by adding a block there and an entry in `themes()` in `src/lib.php`.
+- **Profile and user menu:** the avatar menu at the top right holds Profile, Appearance, Security,
+  Plan and billing, Admin and Sign out. Profile photos are re-encoded to a 256px JPEG (needs the
+  PHP GD extension) and kept in `storage_dir/avatars`, outside the storage quota.
+
 ## Two-step sign-in
 
 Any account can turn on two-step sign-in from the **Security** page: scan a QR code with an

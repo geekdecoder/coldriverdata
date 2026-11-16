@@ -290,20 +290,42 @@ if (preg_match('#^/app/files/(\d+)/(download|delete)$#', $path, $m)) {
     }
 }
 
+/** A safe place to send someone back to inside the chat archive. */
+function chats_return(): string
+{
+    $r = (string)($_POST['return'] ?? '');
+    return (str_starts_with($r, '/app/chats') && !str_contains($r, '//') && !str_contains($r, "\n")) ? $r : '/app/chats';
+}
+
 if ($path === '/app/chats' && $method === 'GET') {
     $term = trim((string)($_GET['q'] ?? ''));
     $source = in_array($_GET['source'] ?? '', ['chatgpt', 'claude'], true) ? $_GET['source'] : '';
+    $folder = (string)($_GET['folder'] ?? '');
+    if ($folder !== 'none' && !ctype_digit($folder)) $folder = '';
+    $starred = !empty($_GET['starred']);
+    $month = preg_match('/^\d{4}-(0[1-9]|1[0-2])$/', (string)($_GET['month'] ?? '')) ? (string)$_GET['month'] : '';
+    $sorts = ['new' => 'c.updated_at DESC, c.id DESC', 'old' => 'c.updated_at ASC, c.id ASC', 'long' => 'c.message_count DESC, c.id DESC', 'title' => 'c.title ASC, c.id ASC'];
+    $sort = isset($sorts[$_GET['sort'] ?? '']) ? $_GET['sort'] : 'new';
     $page = max(1, (int)($_GET['page'] ?? 1));
     $per = 40;
+
+    $conds = ['c.user_id = ?']; $args = [$user['id']];
+    if ($source) { $conds[] = 'c.source = ?'; $args[] = $source; }
+    if ($folder === 'none') $conds[] = 'c.folder_id IS NULL';
+    elseif ($folder !== '') { $conds[] = 'c.folder_id = ?'; $args[] = (int)$folder; }
+    if ($starred) $conds[] = 'c.starred = 1';
+    if ($month) { $conds[] = 'c.updated_at >= ? AND c.updated_at < ?'; $args[] = $month . '-01 00:00:00'; $args[] = gmdate('Y-m-d H:i:s', strtotime($month . '-01 +1 month UTC')); }
+    $where = implode(' AND ', $conds);
+    $cols = 'c.id, c.title, c.source, c.updated_at, c.message_count, c.starred, c.folder_id';
+
     $hits = null; $convs = []; $more = false;
     if ($term !== '') {
-        $srcSql = $source ? ' AND c.source = ?' : '';
-        $args = fn(string $t) => array_merge([$user['id'], $t], $source ? [$source] : []);
-        $sel = 'SELECT c.id, c.title, c.source, c.updated_at, c.message_count, m.body FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE m.user_id = ? AND ';
-        $rows = q($sel . 'MATCH(m.body) AGAINST (? IN NATURAL LANGUAGE MODE)' . $srcSql . ' LIMIT 200', $args($term))->fetchAll();
+        $sel = "SELECT $cols, m.body FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE m.user_id = ? AND $where AND ";
+        $base = array_merge([$user['id']], $args);
+        $rows = q($sel . 'MATCH(m.body) AGAINST (? IN NATURAL LANGUAGE MODE) LIMIT 200', array_merge($base, [$term]))->fetchAll();
+        $like = '%' . addcslashes($term, '%_\\') . '%';
         if (!$rows) {   // short words and stop-words are not in the full-text index
-            $like = '%' . addcslashes($term, '%_\\') . '%';
-            $rows = q($sel . 'm.body LIKE ?' . $srcSql . ' ORDER BY c.updated_at DESC LIMIT 200', $args($like))->fetchAll();
+            $rows = q($sel . 'm.body LIKE ? ORDER BY c.updated_at DESC LIMIT 200', array_merge($base, [$like]))->fetchAll();
         }
         $hits = [];
         foreach ($rows as $r) {
@@ -316,25 +338,130 @@ if ($path === '/app/chats' && $method === 'GET') {
             unset($r['body']);
             $hits[$r['id']] = $r;
         }
-        $titleArgs = array_merge([$user['id'], '%' . addcslashes($term, '%_\\') . '%'], $source ? [$source] : []);
-        foreach (q('SELECT c.id, c.title, c.source, c.updated_at, c.message_count FROM conversations c WHERE c.user_id = ? AND c.title LIKE ?' . $srcSql . ' LIMIT 50', $titleArgs) as $r) {
+        foreach (q("SELECT $cols FROM conversations c WHERE $where AND c.title LIKE ? LIMIT 50", array_merge($args, [$like])) as $r) {
             if (!isset($hits[$r['id']])) $hits[$r['id']] = $r + ['snippet' => '', 'count' => 0];
         }
     } else {
-        $sql = 'SELECT id, title, source, updated_at, message_count FROM conversations WHERE user_id = ?' . ($source ? ' AND source = ?' : '')
-             . ' ORDER BY updated_at DESC, id DESC LIMIT ' . ($per + 1) . ' OFFSET ' . (($page - 1) * $per);
-        $convs = q($sql, array_merge([$user['id']], $source ? [$source] : []))->fetchAll();
+        $convs = q("SELECT $cols FROM conversations c WHERE $where ORDER BY {$sorts[$sort]} LIMIT " . ($per + 1) . ' OFFSET ' . (($page - 1) * $per), $args)->fetchAll();
         $more = count($convs) > $per;
         $convs = array_slice($convs, 0, $per);
     }
-    render('chats', compact('user', 'term', 'source', 'page', 'hits', 'convs', 'more'));
+    $folders = q('SELECT f.id, f.name, COUNT(c.id) AS n FROM folders f LEFT JOIN conversations c ON c.folder_id = f.id WHERE f.user_id = ? GROUP BY f.id, f.name ORDER BY f.name', [$user['id']])->fetchAll();
+    $totals = q('SELECT COUNT(*) AS total, COALESCE(SUM(starred), 0) AS starred, COALESCE(SUM(folder_id IS NULL), 0) AS unfiled FROM conversations WHERE user_id = ?', [$user['id']])->fetch();
+    $months = q("SELECT DATE_FORMAT(updated_at, '%Y-%m') AS ym, COUNT(*) AS n FROM conversations WHERE user_id = ? AND updated_at IS NOT NULL GROUP BY ym ORDER BY ym DESC", [$user['id']])->fetchAll();
+    render('chats', compact('user', 'term', 'source', 'folder', 'starred', 'month', 'sort', 'page', 'hits', 'convs', 'more', 'folders', 'totals', 'months'));
+}
+
+if ($path === '/app/chats/bulk' && $method === 'POST') {
+    $ids = array_values(array_unique(array_filter(array_map('intval', (array)($_POST['ids'] ?? [])))));
+    $action = (string)($_POST['action'] ?? '');
+    if (!$ids) { flash('Tick at least one conversation first.', 'err'); redirect(chats_return()); }
+    $ids = array_slice($ids, 0, 500);
+    $in = implode(',', array_fill(0, count($ids), '?'));
+    $n = count($ids);
+    if ($action === 'star' || $action === 'unstar') {
+        q("UPDATE conversations SET starred = ? WHERE user_id = ? AND id IN ($in)", array_merge([$action === 'star' ? 1 : 0, $user['id']], $ids));
+        flash(($action === 'star' ? 'Starred ' : 'Removed the star from ') . $n . ' conversation' . ($n === 1 ? '' : 's') . '.');
+    } elseif ($action === 'unfile') {
+        q("UPDATE conversations SET folder_id = NULL WHERE user_id = ? AND id IN ($in)", array_merge([$user['id']], $ids));
+        flash("Took $n conversation" . ($n === 1 ? '' : 's') . ' out of their folder.');
+    } elseif (preg_match('/^move:(\d+)$/', $action, $mm) && ($f = q('SELECT id, name FROM folders WHERE id = ? AND user_id = ?', [$mm[1], $user['id']])->fetch())) {
+        q("UPDATE conversations SET folder_id = ? WHERE user_id = ? AND id IN ($in)", array_merge([$f['id'], $user['id']], $ids));
+        flash("Moved $n conversation" . ($n === 1 ? '' : 's') . ' to ' . $f['name'] . '.');
+    } else {
+        flash('Choose what to do with the ticked conversations.', 'err');
+    }
+    redirect(chats_return());
+}
+
+if (preg_match('#^/app/chats/(\d+)/(star|move)$#', $path, $m) && $method === 'POST') {
+    $conv = q('SELECT id, starred FROM conversations WHERE id = ? AND user_id = ?', [$m[1], $user['id']])->fetch();
+    if (!$conv) fail(404, 'That conversation is not in your archive.');
+    if ($m[2] === 'star') {
+        q('UPDATE conversations SET starred = ? WHERE id = ?', [$conv['starred'] ? 0 : 1, $conv['id']]);
+    } else {
+        $fid = (string)($_POST['folder'] ?? '');
+        $f = ctype_digit($fid) ? q('SELECT id FROM folders WHERE id = ? AND user_id = ?', [$fid, $user['id']])->fetch() : null;
+        q('UPDATE conversations SET folder_id = ? WHERE id = ?', [$f['id'] ?? null, $conv['id']]);
+    }
+    redirect(chats_return());
+}
+
+if ($path === '/app/folders' && $method === 'POST') {
+    $name = mb_substr(trim(preg_replace('/\s+/', ' ', (string)($_POST['name'] ?? ''))), 0, 80);
+    if ($name === '') flash('Give the folder a name.', 'err');
+    elseif ((int)q('SELECT COUNT(*) FROM folders WHERE user_id = ?', [$user['id']])->fetchColumn() >= 200) flash('You have reached the limit of 200 folders.', 'err');
+    elseif (q('SELECT 1 FROM folders WHERE user_id = ? AND name = ?', [$user['id'], $name])->fetch()) flash('You already have a folder with that name.', 'err');
+    else {
+        q('INSERT INTO folders (user_id, name, created_at) VALUES (?, ?, ?)', [$user['id'], $name, now()]);
+        redirect('/app/chats?folder=' . (int)db()->lastInsertId());
+    }
+    redirect(chats_return());
+}
+
+if (preg_match('#^/app/folders/(\d+)/(rename|delete)$#', $path, $m) && $method === 'POST') {
+    $f = q('SELECT * FROM folders WHERE id = ? AND user_id = ?', [$m[1], $user['id']])->fetch();
+    if (!$f) fail(404, 'That folder does not exist.');
+    if ($m[2] === 'delete') {
+        q('DELETE FROM folders WHERE id = ?', [$f['id']]);     // its conversations become unfiled, not deleted
+        flash('Deleted the folder ' . $f['name'] . '. Its conversations are still in your archive.');
+        redirect('/app/chats');
+    }
+    $name = mb_substr(trim(preg_replace('/\s+/', ' ', (string)($_POST['name'] ?? ''))), 0, 80);
+    if ($name === '') flash('Give the folder a name.', 'err');
+    elseif (q('SELECT 1 FROM folders WHERE user_id = ? AND name = ? AND id <> ?', [$user['id'], $name, $f['id']])->fetch()) flash('You already have a folder with that name.', 'err');
+    else q('UPDATE folders SET name = ? WHERE id = ?', [$name, $f['id']]);
+    redirect('/app/chats?folder=' . $f['id']);
 }
 
 if (preg_match('#^/app/chats/(\d+)$#', $path, $m) && $method === 'GET') {
     $conv = q('SELECT * FROM conversations WHERE id = ? AND user_id = ?', [$m[1], $user['id']])->fetch();
     if (!$conv) fail(404, 'That conversation is not in your archive.');
     $messages = q('SELECT role, body, sent_at FROM messages WHERE conversation_id = ? ORDER BY position', [$conv['id']])->fetchAll();
-    render('chat', compact('user', 'conv', 'messages'));
+    $folders = q('SELECT id, name FROM folders WHERE user_id = ? ORDER BY name', [$user['id']])->fetchAll();
+    render('chat', compact('user', 'conv', 'messages', 'folders'));
+}
+
+// ---------- profile ----------
+if ($path === '/app/avatar' && $method === 'GET') {
+    $p = avatar_path((int)$user['id']);
+    if (empty($user['avatar_at']) || !is_file($p)) { http_response_code(404); exit; }
+    header('Content-Type: image/jpeg');
+    header('Content-Length: ' . filesize($p));
+    header('Cache-Control: private, max-age=31536000, immutable');
+    readfile($p);
+    exit;
+}
+
+if ($path === '/app/profile' && $method === 'GET') render('profile', ['user' => $user]);
+
+if (preg_match('#^/app/profile/(name|avatar|avatar-remove|theme|password)$#', $path, $m) && $method === 'POST') {
+    if ($m[1] === 'name') {
+        $name = mb_substr(trim(preg_replace('/\s+/', ' ', (string)($_POST['display_name'] ?? ''))), 0, 80);
+        q('UPDATE users SET display_name = ? WHERE id = ?', [$name !== '' ? $name : null, $user['id']]);
+        flash('Name saved.');
+    } elseif ($m[1] === 'avatar') {
+        $up = $_FILES['photo'] ?? null;
+        if (!$up || $up['error'] === UPLOAD_ERR_NO_FILE) flash('Choose a photo first.', 'err');
+        elseif (in_array($up['error'], [UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE], true)) flash('That photo is too large. Use one under ' . fmt_bytes(min(ini_bytes('upload_max_filesize'), ini_bytes('post_max_size'))) . '.', 'err');
+        elseif ($up['error'] !== UPLOAD_ERR_OK || !is_uploaded_file($up['tmp_name'])) flash('The upload was interrupted. Try again.', 'err');
+        elseif ($err = save_avatar($up['tmp_name'], avatar_path((int)$user['id']))) flash($err, 'err');
+        else { q('UPDATE users SET avatar_at = ? WHERE id = ?', [now(), $user['id']]); flash('Photo updated.'); }
+    } elseif ($m[1] === 'avatar-remove') {
+        @unlink(avatar_path((int)$user['id']));
+        q('UPDATE users SET avatar_at = NULL WHERE id = ?', [$user['id']]);
+        flash('Photo removed.');
+    } elseif ($m[1] === 'theme') {
+        $t = (string)($_POST['theme'] ?? '');
+        if (isset(themes()[$t])) { q('UPDATE users SET theme = ? WHERE id = ?', [$t, $user['id']]); flash('Theme changed to ' . themes()[$t]['name'] . '.'); }
+        redirect('/app/profile#appearance');
+    } else {
+        $new = (string)($_POST['new_password'] ?? '');
+        if (!password_verify((string)($_POST['current_password'] ?? ''), $user['password_hash'])) flash('Your current password is not right. Nothing was changed.', 'err');
+        elseif (strlen($new) < 10) flash('Use a new password of at least 10 characters.', 'err');
+        else { q('UPDATE users SET password_hash = ? WHERE id = ?', [password_hash($new, PASSWORD_DEFAULT), $user['id']]); flash('Password changed.'); }
+    }
+    redirect('/app/profile');
 }
 
 if ($path === '/app/billing' && $method === 'GET') {

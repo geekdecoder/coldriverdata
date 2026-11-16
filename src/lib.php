@@ -255,3 +255,71 @@ function legal(string $key): string
     $v = cfg('legal.' . $key);
     return ($v === null || $v === '') ? $defaults[$key] : (string)$v;
 }
+
+// ---------- themes, profile ----------
+
+function themes(): array
+{
+    return [
+        'river'   => ['name' => 'Cold River',  'note' => 'The standard look',          'swatch' => ['#08202B', '#F1F5F6', '#FFFFFF', '#0E6E8C']],
+        'night'   => ['name' => 'Night River', 'note' => 'Dark, easier at night',      'swatch' => ['#050D11', '#0B161C', '#13232C', '#5CC8E0']],
+        'glacier' => ['name' => 'Glacier',     'note' => 'Bright with a blue accent',  'swatch' => ['#0F2A4A', '#F7FAFC', '#FFFFFF', '#1F5FA8']],
+        'sandbar' => ['name' => 'Sandbar',     'note' => 'Warm paper tones',           'swatch' => ['#2B2118', '#F6F1E7', '#FFFDF8', '#9A4A1C']],
+        'auto'    => ['name' => 'Match my device', 'note' => 'Cold River by day, Night River when your device is in dark mode', 'swatch' => ['#08202B', '#F1F5F6', '#0B161C', '#5CC8E0']],
+    ];
+}
+
+function user_theme(?array $user): string
+{
+    $t = $user['theme'] ?? null;
+    return ($t && isset(themes()[$t])) ? $t : 'river';
+}
+
+function user_label(array $user): string
+{
+    $n = trim((string)($user['display_name'] ?? ''));
+    return $n !== '' ? $n : explode('@', $user['email'])[0];
+}
+
+function avatar_path(int $userId): string
+{
+    return rtrim((string)cfg('storage_dir'), '/') . '/avatars/u' . $userId . '.jpg';
+}
+
+/** The signed-in user's photo, or their initial on a coloured disc. */
+function avatar_html(array $user, string $size = 'sm'): string
+{
+    if (!empty($user['avatar_at'])) {
+        $inner = '<img src="/app/avatar?v=' . strtotime($user['avatar_at'] . ' UTC') . '" alt="">';
+    } else {
+        $inner = h(mb_strtoupper(mb_substr(user_label($user), 0, 1)));
+    }
+    return '<span class="avatar avatar-' . $size . '" aria-hidden="true">' . $inner . '</span>';
+}
+
+/**
+ * Turn an uploaded image into a 256px square JPEG at $dest. Re-encoding strips location data
+ * and anything else hidden in the file. Returns an error message, or null on success.
+ */
+function save_avatar(string $tmp, string $dest): ?string
+{
+    if (!function_exists('imagecreatefromstring')) return 'Photo uploads are not available on this server yet.';
+    $info = @getimagesize($tmp);
+    if (!$info || !in_array($info[2], [IMAGETYPE_JPEG, IMAGETYPE_PNG, IMAGETYPE_WEBP, IMAGETYPE_GIF], true)) return 'Choose a JPEG, PNG or WebP image.';
+    if ($info[0] > 8000 || $info[1] > 8000 || $info[0] < 32 || $info[1] < 32) return 'That image is too large or too small. Use one between 32 and 8000 pixels on each side.';
+    $src = @imagecreatefromstring((string)file_get_contents($tmp));
+    if (!$src) return 'That image could not be read. Try a different file.';
+    if ($info[2] === IMAGETYPE_JPEG && function_exists('exif_read_data')) {     // phones store rotation separately
+        $o = (int)(@exif_read_data($tmp)['Orientation'] ?? 1);
+        $deg = [3 => 180, 6 => -90, 8 => 90][$o] ?? 0;
+        if ($deg) { $r = imagerotate($src, $deg, 0); if ($r) { imagedestroy($src); $src = $r; } }
+    }
+    $w = imagesx($src); $h2 = imagesy($src); $side = min($w, $h2);
+    $out = imagecreatetruecolor(256, 256);
+    imagefill($out, 0, 0, imagecolorallocate($out, 255, 255, 255));
+    imagecopyresampled($out, $src, 0, 0, (int)(($w - $side) / 2), (int)(($h2 - $side) / 2), 256, 256, $side, $side);
+    if (!is_dir(dirname($dest))) mkdir(dirname($dest), 0750, true);
+    $ok = imagejpeg($out, $dest, 86);
+    imagedestroy($src); imagedestroy($out);
+    return $ok ? null : 'The photo could not be saved.';
+}
