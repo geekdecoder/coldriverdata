@@ -43,6 +43,10 @@ $user = current_user();
 // ---------- public pages ----------
 if ($path === '/' && $method === 'GET') render('home');
 
+if ($path === '/security' && $method === 'GET') {
+    $b = default_backend();
+    render('data_security', ['objectStorage' => $b && $b['type'] === 's3']);
+}
 if ($path === '/terms' && $method === 'GET') render('terms');
 if ($path === '/privacy' && $method === 'GET') render('privacy');
 
