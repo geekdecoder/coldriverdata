@@ -10,7 +10,8 @@
 
   msgs.forEach(function (m) {
     m._body = m.querySelector('.msg-body');
-    m._raw = m._body.textContent;
+    // Older imports kept Claude's stand-in for artifacts and tool steps; hide it.
+    m._raw = m._body.textContent.replace(/(^|\n)[ \t]*```[^\n]*\n[ \t]*This block is not supported on your current device yet\.?[ \t]*\n[ \t]*```[ \t]*(?=\n|$)/g, '$1').replace(/\n{3,}/g, '\n\n').trim();
     m._hasCode = /(^|\n)\s*(```|~~~)/.test(m._raw);
   });
 
@@ -89,6 +90,7 @@
 
   function visible(m) {
     if (who !== 'all' && m.dataset.role !== who) return false;
+    if (m._raw === '') return false;
     if (mode === 'code' && !m._hasCode) return false;
     return true;
   }
