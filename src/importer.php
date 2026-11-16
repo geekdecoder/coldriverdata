@@ -106,6 +106,54 @@ function parse_chatgpt(array $c): ?array
     ];
 }
 
+/** Remove the "not supported on your current device" stand-ins Claude's export leaves in message text. */
+function strip_claude_placeholders(string $text): string
+{
+    $text = preg_replace('/(^|\n)[ \t]*(`{3,}|~{3,})[^\n]*\n[ \t]*This block is not supported on your current device yet\.?[ \t]*\n[ \t]*\2[ \t]*(?=\n|$)/', '$1', $text) ?? $text;
+    $text = preg_replace('/^[ \t]*This block is not supported on your current device yet\.?[ \t]*$/m', '', $text) ?? $text;
+    return trim(preg_replace("/\n{3,}/", "\n\n", $text) ?? $text);
+}
+
+/** A code fence long enough to hold $content even when it contains fences itself. */
+function fenced(string $content, string $lang = ''): string
+{
+    preg_match_all('/`{3,}/', $content, $m);
+    $fence = str_repeat('`', max(3, ...array_map('strlen', $m[0] ?: ['``'])) + ($m[0] ? 1 : 0));
+    return $fence . preg_replace('/[^A-Za-z0-9+#._-]/', '', $lang) . "\n" . rtrim($content, "\n") . "\n" . $fence;
+}
+
+/** Readable text for one Claude message from its content blocks: prose, plus artifacts as titled code blocks. */
+function claude_blocks_text(array $blocks): string
+{
+    $parts = [];
+    foreach ($blocks as $b) {
+        if (!is_array($b)) continue;
+        $type = $b['type'] ?? '';
+        if ($type === 'text' && is_string($b['text'] ?? null)) {
+            $parts[] = $b['text'];
+        } elseif ($type === 'tool_use' && is_array($b['input'] ?? null)) {
+            $in = $b['input'];
+            // Artifacts and created files carry their whole content; other tool steps (searches and so on) are skipped.
+            $content = null;
+            foreach (['content', 'file_text', 'code', 'new_str'] as $k) {
+                if (is_string($in[$k] ?? null) && trim($in[$k]) !== '') { $content = $in[$k]; break; }
+            }
+            if ($content === null) continue;
+            $title = '';
+            foreach (['title', 'path', 'file_path', 'filename', 'id'] as $k) {
+                if (is_string($in[$k] ?? null) && trim($in[$k]) !== '') { $title = trim($in[$k]); break; }
+            }
+            $lang = is_string($in['language'] ?? null) ? $in['language'] : '';
+            if ($lang === '' && is_string($in['type'] ?? null)) {
+                $lang = ['text/html' => 'html', 'image/svg+xml' => 'xml', 'application/vnd.ant.react' => 'jsx', 'application/vnd.ant.mermaid' => 'mermaid', 'text/markdown' => 'markdown'][$in['type']] ?? '';
+            }
+            if ($lang === '' && $title !== '' && preg_match('/\.([A-Za-z0-9]{1,6})$/', $title, $e)) $lang = strtolower($e[1]);
+            $parts[] = ($title !== '' ? '**' . str_replace('*', '', mb_substr($title, 0, 200)) . "**\n\n" : '') . fenced($content, $lang);
+        }
+    }
+    return implode("\n\n", $parts);
+}
+
 function parse_claude(array $c): ?array
 {
     $id = $c['uuid'] ?? null;
@@ -116,14 +164,11 @@ function parse_claude(array $c): ?array
         $sender = $m['sender'] ?? '';
         $role = $sender === 'human' ? 'user' : ($sender === 'assistant' ? 'assistant' : null);
         if (!$role) continue;
-        $text = is_string($m['text'] ?? null) ? $m['text'] : '';
-        if (trim($text) === '' && is_array($m['content'] ?? null)) {
-            $parts = [];
-            foreach ($m['content'] as $block) {
-                if (($block['type'] ?? '') === 'text' && is_string($block['text'] ?? null)) $parts[] = $block['text'];
-            }
-            $text = implode("\n", $parts);
-        }
+        // Claude's flat "text" field replaces everything that is not plain prose (artifacts, tool
+        // steps) with a placeholder, so build the message from its content blocks when it has them.
+        $text = is_array($m['content'] ?? null) ? claude_blocks_text($m['content']) : '';
+        if (trim($text) === '') $text = is_string($m['text'] ?? null) ? $m['text'] : '';
+        $text = strip_claude_placeholders($text);
         $text = trim($text);
         if ($text === '') continue;
         $msgs[] = ['role' => $role, 'body' => $text, 'sent_at' => ts_to_utc($m['created_at'] ?? null)];
@@ -193,7 +238,16 @@ function run_import(array $job): void
     try {
         if (!$file) throw new RuntimeException('The uploaded file is gone.');
         $path = file_local_path($file);
-        if (!$path || !is_file($path)) throw new RuntimeException('The file is not on this server, so it cannot be read.');
+        $fetched = null;
+        if (!$path) {      // in object storage: bring a temporary copy back to read it
+            $b = backend((int)$file['backend_id']);
+            if (!$b || $b['type'] !== 's3') throw new RuntimeException('The file cannot be found in storage.');
+            $path = $fetched = storage_tmp((int)$file['user_id'], 'imp_' . $file['id']);
+            $out = fopen($path, 'wb');
+            s3_get(file_conn($b, $file), object_key($file), function ($d) use ($out) { fwrite($out, $d); });
+            fclose($out);
+        }
+        if (!is_file($path)) throw new RuntimeException('The file is not on this server, so it cannot be read.');
         $convs = 0; $msgs = 0;
         foreach (export_streams($path, $file['name']) as $fh) {
             foreach (json_stream_items($fh) as $item) {
@@ -210,6 +264,7 @@ function run_import(array $job): void
         q("UPDATE imports SET status = 'failed', error = ?, finished_at = ? WHERE id = ?",
             [mb_substr($e->getMessage(), 0, 500), now(), $job['id']]);
     }
+    if (!empty($fetched)) { unset($GLOBALS['__crd_open_zips']); @unlink($fetched); }
 }
 
 /**
