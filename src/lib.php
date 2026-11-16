@@ -135,6 +135,10 @@ function csrf_field(): string
 
 function csrf_check(): void
 {
+    // PHP discards the whole form when it is larger than post_max_size, so say that plainly.
+    if (!$_POST && (int)($_SERVER['CONTENT_LENGTH'] ?? 0) > ini_bytes('post_max_size')) {
+        fail(413, 'That upload is larger than this server accepts in one go (' . fmt_bytes(ini_bytes('post_max_size')) . '). Go back and try a smaller file.');
+    }
     $sent = $_POST['csrf'] ?? ($_SERVER['HTTP_X_CSRF'] ?? '');
     if (!is_string($sent) || empty($_SESSION['csrf']) || !hash_equals($_SESSION['csrf'], $sent)) {
         fail(400, 'Your session expired. Go back, reload the page and try again.');
