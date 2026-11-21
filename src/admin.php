@@ -78,6 +78,7 @@ if (preg_match('#^/admin/users/(\d+)(?:/(plan|suspend|unsuspend|reset|delete|ver
         $bytes = used_bytes((int)$target['id']);
         $convs = (int)q('SELECT COUNT(*) FROM conversations WHERE user_id = ?', [$target['id']])->fetchColumn();
         $names = [0 => 'Built-in folder'] + q('SELECT id, name FROM storage_backends')->fetchAll(PDO::FETCH_KEY_PAIR);
+        $target['key_count'] = count(user_keys((int)$target['id']));
         render('admin_user', compact('target', 'files', 'bytes', 'convs', 'names', 'admin'));
     }
     if ($method !== 'POST') fail(404, 'There is no page at this address.');
@@ -118,7 +119,7 @@ if (preg_match('#^/admin/users/(\d+)(?:/(plan|suspend|unsuspend|reset|delete|ver
     }
     if ($action === 'twostep') {
         if ($isSelf) { flash('Turn off your own two-step sign-in from the Security page.', 'err'); redirect($back); }
-        two_step_disable((int)$target['id']);
+        second_factor_reset((int)$target['id']);
         admin_log($admin, 'two-step sign-in turned off', $target['email']);
         flash('Two-step sign-in is off for this account. They can sign in with their password and set it up again.');
         redirect($back);

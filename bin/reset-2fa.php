@@ -7,9 +7,10 @@ require dirname(__DIR__) . '/src/lib.php';
 require dirname(__DIR__) . '/src/s3.php';
 require dirname(__DIR__) . '/src/storage.php';
 require dirname(__DIR__) . '/src/twostep.php';
+require dirname(__DIR__) . '/src/webauthn.php';
 
 $email = strtolower(trim($argv[1] ?? ''));
 $u = $email !== '' ? q('SELECT id FROM users WHERE email = ?', [$email])->fetch() : null;
 if (!$u) exit("usage: php bin/reset-2fa.php email   (no account with that email)\n");
-two_step_disable((int)$u['id']);
-echo "Two-step sign-in is off for $email. They can sign in with their password and set it up again.\n";
+second_factor_reset((int)$u['id']);
+echo "Two-step sign-in is off for $email (authenticator app and security keys removed). They can sign in with their password and set it up again.\n";

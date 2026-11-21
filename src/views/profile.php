@@ -47,7 +47,7 @@
 <div><label for="new_password">New password <span class="muted small">(10 characters or more)</span></label><input id="new_password" name="new_password" type="password" autocomplete="new-password" minlength="10" required></div>
 <button class="btn btn-accent">Change password</button>
 </form>
-<p class="muted">Two-step sign-in is <?= two_step_on($user) ? 'on' : 'off' ?>. <a href="/app/security">Manage it on the Security page</a>.</p>
+<p class="muted">Two-step sign-in is <?= second_factor_on($user) ? 'on' : 'off' ?>. <a href="/app/security">Manage it on the Security page</a>.</p>
 </section>
 <script>
 // Shrink the chosen photo to 512px in the browser before it is sent, so large phone photos

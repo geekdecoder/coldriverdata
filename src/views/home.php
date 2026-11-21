@@ -63,7 +63,7 @@
 <div class="cards">
 <div class="card"><h3>Encrypted in transit</h3><p>Every upload, download and sign-in travels over an encrypted connection.</p></div>
 <div class="card"><h3>Yours alone</h3><p>No public file addresses. Only your signed-in account can open your files and conversations.</p></div>
-<div class="card"><h3>Two-step sign-in</h3><p>Add a code from your phone so a stolen password is not enough to get in.</p></div>
+<div class="card"><h3>Two-step sign-in</h3><p>Add a security key or a code from your phone, so a stolen password is not enough to get in.</p></div>
 </div>
 <p><a href="/security">Read exactly how your data is protected</a></p>
 </div>

@@ -129,13 +129,18 @@ the object storage's own redundancy; copying them to a second location is not bu
 
 ## Two-step sign-in
 
-Any account can turn on two-step sign-in from the **Security** page: scan a QR code with an
-authenticator app (Google Authenticator, Authy, 1Password, Microsoft Authenticator), enter a code
-to confirm, and save the ten one-time recovery codes. After that, signing in needs the password
-plus a code. Admin pages require it (`require_admin_2fa` in `config.php`).
+Any account can add a second step from the **Security** page, and can have both kinds at once:
 
-Secrets are encrypted with `app_key`, so `app_key` must be set. If someone loses both their phone
-and their recovery codes, an admin can turn it off from the user's page, or from the server:
+- **Security keys** (YubiKey and other FIDO2 / WebAuthn keys): plug in, touch, done. Up to 10 keys
+  per account. Keys are tied to the site's address in `app_url`, so they must be added and used on
+  that exact address over HTTPS; changing the domain later invalidates them.
+- **Authenticator app**: a 6-digit code from Google Authenticator, Authy, 1Password and similar.
+
+Adding the first one creates ten one-time recovery codes. Admin pages require a second step
+(`require_admin_2fa` in `config.php`). The authenticator secret is encrypted with `app_key`.
+
+If someone loses every key, their phone and their recovery codes, an admin can turn two-step
+sign-in off from the user's page, or from the server:
 
     php bin/reset-2fa.php you@example.com
 
