@@ -7,6 +7,7 @@ require dirname(__DIR__) . '/src/importer.php';
 require dirname(__DIR__) . '/src/s3.php';
 require dirname(__DIR__) . '/src/storage.php';
 require dirname(__DIR__) . '/src/twostep.php';
+require dirname(__DIR__) . '/src/webauthn.php';
 
 $path = rtrim(parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/', '/') ?: '/';
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
@@ -85,7 +86,7 @@ if ($path === '/login') {
         elseif ($row && !empty($row['suspended_at']) && password_verify((string)($_POST['password'] ?? ''), $row['password_hash'])) $error = 'This account is suspended. Contact support.';
         elseif ($row && password_verify((string)($_POST['password'] ?? ''), $row['password_hash'])) {
             session_regenerate_id(true);
-            if (two_step_on($row)) {
+            if (second_factor_on($row)) {
                 $_SESSION['pending_2fa'] = ['uid' => (int)$row['id'], 'at' => time(), 'tries' => 0];
                 redirect('/login/code');
             }
@@ -125,7 +126,41 @@ if ($path === '/login/code') {
         q('INSERT INTO login_attempts (ip, at) VALUES (?, ?)', [client_ip(), now()]);
         $error = 'That code is not right. Codes change every 30 seconds, so use the newest one.';
     }
-    render('login_code', ['error' => $error]);
+    $acct = q('SELECT * FROM users WHERE id = ?', [$p['uid']])->fetch();
+    render('login_code', ['error' => $error, 'hasTotp' => $acct && two_step_on($acct), 'hasKeys' => $acct && count(user_keys((int)$acct['id'])) > 0]);
+}
+
+if (preg_match('#^/login/key/(options|verify)$#', $path, $m) && $method === 'POST') {
+    $p = $_SESSION['pending_2fa'] ?? null;
+    if (!$p || $p['at'] < time() - 600) json_out(['error' => 'Your sign-in expired. Start again.', 'redirect' => '/login'], 401);
+    $row = q('SELECT * FROM users WHERE id = ?', [$p['uid']])->fetch();
+    if (!$row || !empty($row['suspended_at'])) json_out(['error' => 'Start again.', 'redirect' => '/login'], 401);
+    if ($m[1] === 'options') {
+        $challenge = random_bytes(32);
+        $_SESSION['webauthn_login'] = ['c' => base64_encode($challenge), 'at' => time()];
+        json_out(['challenge' => b64u_enc($challenge), 'rpId' => webauthn_rp()['id'], 'timeout' => 60000, 'userVerification' => 'discouraged',
+                  'allowCredentials' => array_map(fn($k) => ['type' => 'public-key', 'id' => $k['credential_id']], user_keys((int)$row['id']))]);
+    }
+    $w = $_SESSION['webauthn_login'] ?? null;
+    unset($_SESSION['webauthn_login']);
+    $recent = (int)q('SELECT COUNT(*) FROM login_attempts WHERE ip = ? AND at > ?', [client_ip(), gmdate('Y-m-d H:i:s', time() - 900)])->fetchColumn();
+    if ($recent >= 10 || $p['tries'] >= 5) { unset($_SESSION['pending_2fa']); json_out(['error' => 'Too many failed attempts. Wait 15 minutes, then sign in again.', 'redirect' => '/login'], 429); }
+    try {
+        if (!$w || $w['at'] < time() - 300) throw new WebAuthnError('That attempt expired. Try again.');
+        $in = json_body();
+        $key = q('SELECT * FROM security_keys WHERE user_id = ? AND credential_id = ?', [$row['id'], (string)($in['id'] ?? '')])->fetch();
+        if (!$key) throw new WebAuthnError('That security key is not registered to this account.');
+        $count = webauthn_verify_assertion($key, b64u_dec((string)($in['clientDataJSON'] ?? '')), b64u_dec((string)($in['authenticatorData'] ?? '')), b64u_dec((string)($in['signature'] ?? '')), base64_decode($w['c']));
+        q('UPDATE security_keys SET sign_count = ?, last_used_at = ? WHERE id = ?', [$count, now(), $key['id']]);
+        unset($_SESSION['pending_2fa']);
+        session_regenerate_id(true);
+        $_SESSION['uid'] = (int)$row['id'];
+        json_out(['ok' => true, 'redirect' => '/app']);
+    } catch (WebAuthnError $e) {
+        $_SESSION['pending_2fa']['tries']++;
+        q('INSERT INTO login_attempts (ip, at) VALUES (?, ?)', [client_ip(), now()]);
+        json_out(['error' => $e->getMessage()], 400);
+    }
 }
 
 if ($path === '/logout' && $method === 'POST') {
@@ -531,6 +566,58 @@ if ($path === '/app/billing/portal' && $method === 'POST') {
     }
 }
 
+// ---------- security keys ----------
+if ($path === '/app/security/keys/options' && $method === 'POST') {
+    $existing = user_keys((int)$user['id']);
+    if (count($existing) >= 10) json_out(['error' => 'You have reached the limit of 10 security keys.'], 400);
+    $challenge = random_bytes(32);
+    $_SESSION['webauthn_reg'] = ['c' => base64_encode($challenge), 'at' => time()];
+    json_out([
+        'challenge' => b64u_enc($challenge),
+        'rp' => ['name' => cfg('app_name'), 'id' => webauthn_rp()['id']],
+        'user' => ['id' => b64u_enc(hash('sha256', 'crd-user-' . $user['id'], true)), 'name' => $user['email'], 'displayName' => user_label($user)],
+        'pubKeyCredParams' => [['type' => 'public-key', 'alg' => -7], ['type' => 'public-key', 'alg' => -257]],
+        'authenticatorSelection' => ['userVerification' => 'discouraged', 'residentKey' => 'discouraged'],
+        'attestation' => 'none', 'timeout' => 60000,
+        'excludeCredentials' => array_map(fn($k) => ['type' => 'public-key', 'id' => $k['credential_id']], $existing),
+    ]);
+}
+
+if ($path === '/app/security/keys/register' && $method === 'POST') {
+    $w = $_SESSION['webauthn_reg'] ?? null;
+    unset($_SESSION['webauthn_reg']);
+    try {
+        if (!$w || $w['at'] < time() - 300) throw new WebAuthnError('That attempt expired. Try again.');
+        $in = json_body();
+        $cred = webauthn_verify_registration(b64u_dec((string)($in['clientDataJSON'] ?? '')), b64u_dec((string)($in['attestationObject'] ?? '')), base64_decode($w['c']));
+        if (q('SELECT 1 FROM security_keys WHERE credential_id = ?', [$cred['credential_id']])->fetch()) throw new WebAuthnError('That security key is already registered.');
+        $name = mb_substr(trim(preg_replace('/\s+/', ' ', (string)($in['name'] ?? ''))), 0, 80);
+        if ($name === '') $name = 'Security key ' . (count(user_keys((int)$user['id'])) + 1);
+        $first = !second_factor_on($user);
+        q('INSERT INTO security_keys (user_id, credential_id, public_key, sign_count, name, created_at) VALUES (?,?,?,?,?,?)',
+            [$user['id'], $cred['credential_id'], $cred['public_key'], $cred['sign_count'], $name, now()]);
+        $unused = (int)q('SELECT COUNT(*) FROM recovery_codes WHERE user_id = ? AND used_at IS NULL', [$user['id']])->fetchColumn();
+        if ($first || !$unused) $_SESSION['new_recovery_codes'] = two_step_new_recovery_codes((int)$user['id']);
+        flash('Added "' . $name . '". Signing in now asks for a security key' . (two_step_on($user) ? ' or a code from your app' : '') . '.');
+        json_out(['ok' => true, 'redirect' => '/app/security']);
+    } catch (WebAuthnError $e) {
+        json_out(['error' => $e->getMessage()], 400);
+    }
+}
+
+if (preg_match('#^/app/security/keys/(\d+)/remove$#', $path, $m) && $method === 'POST') {
+    $key = q('SELECT * FROM security_keys WHERE id = ? AND user_id = ?', [$m[1], $user['id']])->fetch();
+    if (!$key) redirect('/app/security');
+    if (!password_verify((string)($_POST['password'] ?? ''), $user['password_hash'])) {
+        flash('Your password is not right. The key was not removed.', 'err');
+        redirect('/app/security');
+    }
+    q('DELETE FROM security_keys WHERE id = ?', [$key['id']]);
+    if (!second_factor_on($user)) q('DELETE FROM recovery_codes WHERE user_id = ?', [$user['id']]);
+    flash('Removed "' . $key['name'] . '".' . (second_factor_on($user) ? '' : ' Two-step sign-in is now off.'));
+    redirect('/app/security');
+}
+
 // ---------- security (two-step sign-in) ----------
 if ($path === '/app/security' && $method === 'GET') {
     $codes = $_SESSION['new_recovery_codes'] ?? null;
@@ -539,6 +626,7 @@ if ($path === '/app/security' && $method === 'GET') {
     render('security', [
         'user' => $user, 'available' => app_key() !== null, 'codes' => $codes, 'setup' => $setup,
         'left' => (int)q('SELECT COUNT(*) FROM recovery_codes WHERE user_id = ? AND used_at IS NULL', [$user['id']])->fetchColumn(),
+        'keys' => user_keys((int)$user['id']),
     ]);
 }
 
@@ -564,8 +652,11 @@ if (preg_match('#^/app/security/(start|cancel|confirm|disable|codes)$#', $path, 
     // disable and new codes both need the password and a current code
     $okPass = password_verify((string)($_POST['password'] ?? ''), $user['password_hash']);
     $code = (string)($_POST['code'] ?? '');
-    if (!two_step_on($user)) redirect($back);
-    if (!$okPass || !(two_step_check_code($user, $code) || two_step_use_recovery($user, $code))) {
+    if ($m[1] === 'disable' && !two_step_on($user)) redirect($back);
+    if (!second_factor_on($user)) redirect($back);
+    // With an authenticator app, a current code is needed too. With only security keys, the password is enough here.
+    $okCode = two_step_on($user) ? (two_step_check_code($user, $code) || two_step_use_recovery($user, $code)) : true;
+    if (!$okPass || !$okCode) {
         flash('Password or code not right. Nothing was changed.', 'err');
         redirect($back);
     }

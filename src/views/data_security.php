@@ -34,7 +34,7 @@
 
 <h2>Your account is hard to break into</h2>
 <ul>
-<li><strong>Two-step sign-in:</strong> add a code from an authenticator app, so a stolen password alone is not enough. Staff accounts are required to use it.</li>
+<li><strong>Two-step sign-in:</strong> add a hardware security key such as a YubiKey, a code from an authenticator app, or both, so a stolen password alone is not enough. Staff accounts are required to use it.</li>
 <li><strong>Passwords are never stored.</strong> We keep only a one-way scrambled form that cannot be turned back into your password.</li>
 <li><strong>Guessing is blocked.</strong> Repeated wrong passwords or codes lock out further attempts for a while.</li>
 <li><strong>Email addresses are confirmed</strong> before a new account can be used.</li>

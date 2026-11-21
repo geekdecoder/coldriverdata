@@ -95,5 +95,8 @@ function two_step_new_recovery_codes(int $userId): array
 function two_step_disable(int $userId): void
 {
     q('UPDATE users SET totp_secret_enc = NULL, totp_enabled_at = NULL, totp_last_step = NULL WHERE id = ?', [$userId]);
-    q('DELETE FROM recovery_codes WHERE user_id = ?', [$userId]);
+    // Recovery codes stay while a security key still protects the account.
+    $keys = 0;
+    try { $keys = (int)q('SELECT COUNT(*) FROM security_keys WHERE user_id = ?', [$userId])->fetchColumn(); } catch (Throwable $e) { /* table not created yet */ }
+    if (!$keys) q('DELETE FROM recovery_codes WHERE user_id = ?', [$userId]);
 }

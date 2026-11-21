@@ -257,3 +257,5 @@ body{background:#fff;color:#000;font-size:11pt}
 .codeblock [class^=hljs-]{color:#000!important}
 .md code{background:#eee}.md-table{overflow:visible;border-color:#999}.md th{background:#eee;color:#000}
 }
+.or{font-size:20px;margin-top:10px;padding-top:18px;border-top:1px solid var(--line)}
+td details summary{list-style:none;cursor:pointer}td details summary::-webkit-details-marker{display:none}td details form{margin-top:10px;min-width:240px}
