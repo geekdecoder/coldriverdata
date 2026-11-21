@@ -37,6 +37,16 @@ if ($path === '/webhooks/stripe' && $method === 'POST') {
     exit('ok');
 }
 
+// Keep everyone on the one address in app_url (for example send www. to the bare domain), so
+// sign-in cookies and security keys always see the same site.
+$canon = parse_url((string)cfg('app_url'));
+$reqHost = strtolower(explode(':', (string)($_SERVER['HTTP_HOST'] ?? ''))[0]);
+if ($method === 'GET' && !empty($canon['host']) && $reqHost !== '' && $reqHost !== strtolower($canon['host'])
+    && ($reqHost === 'www.' . strtolower($canon['host']) || 'www.' . $reqHost === strtolower($canon['host']))) {
+    header('Location: ' . rtrim((string)cfg('app_url'), '/') . ($_SERVER['REQUEST_URI'] ?? '/'), true, 301);
+    exit;
+}
+
 start_session();
 if ($method === 'POST') csrf_check();
 $user = current_user();
