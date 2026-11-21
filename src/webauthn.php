@@ -19,8 +19,23 @@ function b64u_dec(string $s): string
 function webauthn_rp(): array
 {
     $u = parse_url((string)cfg('app_url'));
-    $host = $u['host'] ?? 'localhost';
+    $host = strtolower($u['host'] ?? 'localhost');
+    if (str_starts_with($host, 'www.')) $host = substr($host, 4);     // one identity for www and non-www
     return ['id' => $host, 'origin' => ($u['scheme'] ?? 'https') . '://' . $host . (isset($u['port']) ? ':' . $u['port'] : '')];
+}
+
+/**
+ * Addresses the browser may report for this site: the configured one, and the same host with or
+ * without "www.". Both belong to the same site identity (rp id), so a key works on either.
+ */
+function webauthn_origins(): array
+{
+    $u = parse_url((string)cfg('app_url'));
+    $host = strtolower($u['host'] ?? 'localhost');
+    $bare = str_starts_with($host, 'www.') ? substr($host, 4) : $host;
+    $tail = isset($u['port']) ? ':' . $u['port'] : '';
+    $scheme = $u['scheme'] ?? 'https';
+    return array_values(array_unique(["$scheme://$bare$tail", "$scheme://www.$bare$tail"]));
 }
 
 /** Decode one CBOR item at $o (advances $o). Covers what authenticators emit. */
@@ -83,7 +98,10 @@ function webauthn_check_client(string $clientDataJSON, string $type, string $cha
     $c = json_decode($clientDataJSON, true);
     if (!is_array($c) || ($c['type'] ?? '') !== $type) throw new WebAuthnError('Unexpected response from the security key.');
     if (!is_string($c['challenge'] ?? null) || !hash_equals(b64u_enc($challenge), $c['challenge'])) throw new WebAuthnError('That attempt expired. Try again.');
-    if (($c['origin'] ?? '') !== webauthn_rp()['origin']) throw new WebAuthnError('The security key was used on a different website address.');
+    $origin = strtolower((string)($c['origin'] ?? ''));
+    if (!in_array($origin, webauthn_origins(), true)) {
+        throw new WebAuthnError('This page was opened at ' . ($origin !== '' ? $origin : 'an unknown address') . ', but security keys are set up for ' . webauthn_origins()[0] . '. Open the site at that address and try again.');
+    }
 }
 
 /** Split authenticator data into its fields. */
